@@ -1,0 +1,160 @@
+# ============================================================
+# Operating system files
+# ============================================================
+
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# IDEs and editors
+# ============================================================
+
+.idea/
+*.iml
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+*.swp
+*.swo
+*~
+
+# ============================================================
+# Environment variables and secrets
+# ============================================================
+
+.env
+.env.*
+!.env.example
+
+backend/.env
+frontend/.env
+
+# Google OAuth credentials
+client_secret*.json
+credentials*.json
+token*.json
+
+# Local certificates and keys
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# ============================================================
+# Java / Spring Boot / Maven
+# ============================================================
+
+backend/target/
+backend/.classpath
+backend/.project
+backend/.settings/
+backend/.factorypath
+
+*.class
+*.jar
+*.war
+*.ear
+
+# Keep Maven wrapper JAR committed
+!backend/.mvn/wrapper/maven-wrapper.jar
+
+# Maven release files
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+
+# Spring Boot local logs
+backend/logs/
+*.log
+
+# ============================================================
+# React / TypeScript / Vite / Node
+# ============================================================
+
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/.vite/
+frontend/.cache/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# TypeScript incremental build files
+*.tsbuildinfo
+
+# Local frontend environment files
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# ============================================================
+# Testing
+# ============================================================
+
+coverage/
+test-results/
+playwright-report/
+blob-report/
+
+# ============================================================
+# Docker
+# ============================================================
+
+# Local Compose override files
+docker-compose.override.yml
+compose.override.yml
+
+# Docker runtime files
+*.pid
+
+# Do not ignore Dockerfiles or Compose files
+!Dockerfile
+!docker-compose.yml
+!compose.yml
+
+# ============================================================
+# Database and local data
+# ============================================================
+
+*.db
+*.sqlite
+*.sqlite3
+
+data/
+postgres-data/
+pgdata/
+
+# Docker named volumes normally live outside the repository,
+# but ignore local bind-mounted database directories if created.
+
+# ============================================================
+# Build and temporary files
+# ============================================================
+
+tmp/
+temp/
+.cache/
+
+*.tmp
+*.bak
+*.orig
+
+# ============================================================
+# Generated AI or local tool files
+# ============================================================
+
+.copilot/
+.codex/
+.claude/

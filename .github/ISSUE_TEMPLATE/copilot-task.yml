@@ -1,0 +1,90 @@
+name: Copilot implementation task
+description: A scoped implementation task for GitHub Copilot cloud agent
+title: "[Task] "
+labels:
+  - copilot-task
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep this issue limited to one independently testable vertical slice.
+        Read the repository specifications before making changes.
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: Describe the user-visible or engineering result.
+      placeholder: Users can manually create and select an event.
+    validations:
+      required: true
+
+  - type: textarea
+    id: read_first
+    attributes:
+      label: Read first
+      value: |
+        - docs/PRODUCT_SPEC.md
+        - docs/ARCHITECTURE.md
+        - docs/ROADMAP.md
+        - .github/copilot-instructions.md
+    validations:
+      required: true
+
+  - type: textarea
+    id: in_scope
+    attributes:
+      label: In scope
+      description: List exactly what should be implemented.
+      placeholder: |
+        - Event database model
+        - Create-event API
+        - Upcoming-events page
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: List adjacent functionality that must not be implemented.
+      placeholder: |
+        - Google Calendar
+        - Weather integration
+        - LLM classification
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Define observable conditions that prove completion.
+      placeholder: |
+        - A valid event can be created.
+        - Invalid times return HTTP 400.
+        - Events are ordered chronologically.
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Required validation
+      description: List commands Copilot must run.
+      placeholder: |
+        - ./mvnw test
+        - npm run lint
+        - npm run typecheck
+        - npm test -- --run
+        - npm run build
+        - docker compose config
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional instructions
+      description: Add any task-specific constraints.
