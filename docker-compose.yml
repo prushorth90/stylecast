@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-stylecast}
+      POSTGRES_USER: ${DB_USER:-stylecast}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-stylecast}
+    ports:
+      # Host port 5433 maps to Postgres' standard internal port 5432, so it
+      # doesn't collide with a Postgres instance already running locally.
+      - "5433:5432"
+    volumes:
+      - stylecast_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-stylecast} -d ${DB_NAME:-stylecast}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      DB_NAME: ${DB_NAME:-stylecast}
+      DB_USER: ${DB_USER:-stylecast}
+      DB_PASSWORD: ${DB_PASSWORD:-stylecast}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  stylecast_postgres_data:
