@@ -1,18 +1,41 @@
+import AddIcon from '@mui/icons-material/Add';
+import Button from '@mui/material/Button';
+import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
+import { useState } from 'react';
+import { CreateEventDialog } from '../components/events/CreateEventDialog';
+import { EventList } from '../components/events/EventList';
 
 /**
- * Placeholder Events page. Calendar integration, event listing, and
- * event selection will be implemented in later, separately scoped issues.
+ * Events page: shows upcoming events chronologically and lets the user
+ * manually create a new event. Calendar integration is a later, separately
+ * scoped issue.
  */
 export function EventsPage() {
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+
   return (
     <>
-      <Typography variant="h4" component="h1" gutterBottom>
-        Events
-      </Typography>
-      <Typography variant="body1" color="text.secondary">
-        Event listing and calendar integration are not implemented yet.
-      </Typography>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between', mb: 3 }}
+      >
+        <Typography variant="h4" component="h1">
+          Events
+        </Typography>
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={() => setIsCreateDialogOpen(true)}
+        >
+          Create Event
+        </Button>
+      </Stack>
+
+      <EventList />
+
+      <CreateEventDialog open={isCreateDialogOpen} onClose={() => setIsCreateDialogOpen(false)} />
     </>
   );
 }

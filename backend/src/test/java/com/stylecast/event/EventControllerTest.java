@@ -1,0 +1,252 @@
+package com.stylecast.event;
+
+import com.stylecast.common.error.ApiError;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.resttestclient.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AutoConfigureTestRestTemplate
+@Testcontainers
+class EventControllerTest {
+
+    @Container
+    @ServiceConnection
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
+    @LocalServerPort
+    private int port;
+
+    @Autowired
+    private TestRestTemplate restTemplate;
+
+    @Autowired
+    private EventRepository eventRepository;
+
+    @BeforeEach
+    void cleanDatabase() {
+        eventRepository.deleteAll();
+    }
+
+    private String url(String path) {
+        return "http://localhost:" + port + path;
+    }
+
+    private Map<String, Object> validRequestBody() {
+        OffsetDateTime start = OffsetDateTime.now().plusDays(1);
+        return Map.of(
+                "title", "Rooftop birthday party",
+                "description", "Casual outdoor birthday celebration",
+                "location", "123 Main St, Springfield",
+                "startTime", start.toString(),
+                "endTime", start.plusHours(3).toString(),
+                "setting", "OUTDOOR",
+                "dressCode", "Smart casual");
+    }
+
+    private HttpEntity<Map<String, Object>> jsonRequest(Map<String, Object> body) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return new HttpEntity<>(body, headers);
+    }
+
+    @Test
+    void createEvent_withValidRequest_returns201AndPersists() {
+        ResponseEntity<EventResponseBody> response = restTemplate.postForEntity(
+                url("/api/events"), jsonRequest(validRequestBody()), EventResponseBody.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(response.getHeaders().getLocation()).isNotNull();
+        EventResponseBody created = response.getBody();
+        assertThat(created).isNotNull();
+        assertThat(created.id()).isNotNull();
+        assertThat(created.title()).isEqualTo("Rooftop birthday party");
+        assertThat(created.location()).isEqualTo("123 Main St, Springfield");
+        assertThat(created.setting()).isEqualTo("OUTDOOR");
+        assertThat(created.dressCode()).isEqualTo("Smart casual");
+        assertThat(created.createdAt()).isNotNull();
+
+        assertThat(eventRepository.findById(created.id())).isPresent();
+    }
+
+    @Test
+    void createEvent_withBlankTitle_returns400() {
+        Map<String, Object> body = new java.util.HashMap<>(validRequestBody());
+        body.put("title", "   ");
+
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                url("/api/events"), jsonRequest(body), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().fieldErrors())
+                .anyMatch(fieldError -> fieldError.field().equals("title"));
+    }
+
+    @Test
+    void createEvent_withBlankLocation_returns400() {
+        Map<String, Object> body = new java.util.HashMap<>(validRequestBody());
+        body.put("location", "");
+
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                url("/api/events"), jsonRequest(body), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().fieldErrors())
+                .anyMatch(fieldError -> fieldError.field().equals("location"));
+    }
+
+    @Test
+    void createEvent_withMissingSetting_returns400() {
+        Map<String, Object> body = new java.util.HashMap<>(validRequestBody());
+        body.remove("setting");
+
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                url("/api/events"), jsonRequest(body), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void createEvent_withEndBeforeStart_returns400() {
+        OffsetDateTime start = OffsetDateTime.now().plusDays(1);
+        Map<String, Object> body = new java.util.HashMap<>(validRequestBody());
+        body.put("startTime", start.toString());
+        body.put("endTime", start.minusHours(1).toString());
+
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                url("/api/events"), jsonRequest(body), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().message()).contains("endTime must be after startTime");
+    }
+
+    @Test
+    void createEvent_withEndEqualToStart_returns400() {
+        OffsetDateTime start = OffsetDateTime.now().plusDays(1);
+        Map<String, Object> body = new java.util.HashMap<>(validRequestBody());
+        body.put("startTime", start.toString());
+        body.put("endTime", start.toString());
+
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                url("/api/events"), jsonRequest(body), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void listEvents_returnsUpcomingEventsInChronologicalOrder() {
+        OffsetDateTime now = OffsetDateTime.now();
+        Event soonest = eventRepository.save(sampleEvent("Soonest", now.plusHours(2), now.plusHours(3)));
+        Event latest = eventRepository.save(sampleEvent("Latest", now.plusDays(5), now.plusDays(5).plusHours(1)));
+        Event middle = eventRepository.save(sampleEvent("Middle", now.plusDays(1), now.plusDays(1).plusHours(1)));
+
+        ResponseEntity<EventResponseBody[]> response = restTemplate.getForEntity(
+                url("/api/events"), EventResponseBody[].class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        List<UUID> orderedIds = List.of(response.getBody()).stream().map(EventResponseBody::id).toList();
+        assertThat(orderedIds).containsExactly(soonest.getId(), middle.getId(), latest.getId());
+    }
+
+    @Test
+    void listEvents_excludesPastEvents() {
+        OffsetDateTime now = OffsetDateTime.now();
+        Event past = eventRepository.save(sampleEvent("Past event", now.minusDays(2), now.minusDays(2).plusHours(1)));
+        Event upcoming = eventRepository.save(sampleEvent("Upcoming event", now.plusDays(1), now.plusDays(1).plusHours(1)));
+
+        ResponseEntity<EventResponseBody[]> response = restTemplate.getForEntity(
+                url("/api/events"), EventResponseBody[].class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        List<UUID> ids = List.of(response.getBody()).stream().map(EventResponseBody::id).toList();
+        assertThat(ids).contains(upcoming.getId());
+        assertThat(ids).doesNotContain(past.getId());
+    }
+
+    @Test
+    void getEvent_withExistingId_returnsEvent() {
+        Event event = eventRepository.save(sampleEvent(
+                "Existing event", OffsetDateTime.now().plusDays(1), OffsetDateTime.now().plusDays(1).plusHours(1)));
+
+        ResponseEntity<EventResponseBody> response = restTemplate.getForEntity(
+                url("/api/events/" + event.getId()), EventResponseBody.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().id()).isEqualTo(event.getId());
+        assertThat(response.getBody().title()).isEqualTo("Existing event");
+    }
+
+    @Test
+    void getEvent_withUnknownId_returns404() {
+        UUID unknownId = UUID.randomUUID();
+
+        ResponseEntity<ApiError> response = restTemplate.getForEntity(
+                url("/api/events/" + unknownId), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().message()).contains(unknownId.toString());
+    }
+
+    @Test
+    void getEvent_withMalformedId_returns400() {
+        ResponseEntity<ApiError> response = restTemplate.getForEntity(url("/api/events/1"), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().fieldErrors()).isNull();
+    }
+
+    private Event sampleEvent(String title, OffsetDateTime start, OffsetDateTime end) {
+        return new Event(
+                UUID.randomUUID(),
+                title,
+                "Description for " + title,
+                "Some location",
+                start,
+                end,
+                EventSetting.INDOOR,
+                "Casual",
+                Instant.now());
+    }
+
+    /**
+     * Minimal shape used only for deserializing responses in this test class.
+     */
+    private record EventResponseBody(
+            UUID id,
+            String title,
+            String description,
+            String location,
+            String startTime,
+            String endTime,
+            String setting,
+            String dressCode,
+            String createdAt) {
+    }
+}
