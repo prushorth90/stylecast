@@ -16,6 +16,25 @@ The repository is currently in initial setup.
 Application code will be implemented through scoped GitHub issues assigned to
 GitHub Copilot cloud agent.
 
+Implemented so far:
+
+- Manual event creation and an upcoming-events list at `/events`, with an
+  event detail page at `/events/{eventId}`. Events are persisted in
+  PostgreSQL via Flyway-managed schema, so they survive a browser refresh
+  or backend restart.
+
+### Manual event validation rules
+
+- `title` and `location` are required and must not be blank.
+- `startTime` and `endTime` are required, and `endTime` must be strictly
+  after `startTime`.
+- `setting` is required and must be `INDOOR` or `OUTDOOR`.
+- `description` and `dressCode` are optional.
+- The events list only shows events whose `endTime` hasn't already passed,
+  ordered chronologically by `startTime`.
+- Invalid requests return HTTP 400 with a structured error body (including
+  per-field messages where applicable); an unknown event id returns 404.
+
 ## Planned stack
 
 ### Frontend
