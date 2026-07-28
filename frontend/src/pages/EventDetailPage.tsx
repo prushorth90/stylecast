@@ -67,6 +67,15 @@ export function EventDetailPage() {
       </Stack>
 
       {event.description && <Typography variant="body1">{event.description}</Typography>}
+
+      <Button
+        component={RouterLink}
+        to={`/events/${event.id}/style`}
+        variant="contained"
+        sx={{ alignSelf: 'flex-start' }}
+      >
+        Style this event
+      </Button>
     </Stack>
   );
 }

@@ -79,4 +79,31 @@ describe('EventDetailPage', () => {
     expect(screen.getByText('Smart casual')).toBeInTheDocument();
     expect(screen.getByText('Casual celebration')).toBeInTheDocument();
   });
+
+  it('links "Style this event" to the event styling page', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: '11111111-1111-1111-1111-111111111111',
+          title: 'Birthday party',
+          description: 'Casual celebration',
+          location: '123 Main St',
+          startTime: '2026-08-01T18:00:00Z',
+          endTime: '2026-08-01T21:00:00Z',
+          setting: 'OUTDOOR',
+          dressCode: 'Smart casual',
+          createdAt: '2026-07-28T00:00:00Z',
+        }),
+        { status: 200 },
+      ),
+    );
+
+    renderWithProviders('11111111-1111-1111-1111-111111111111');
+
+    const link = await screen.findByText('Style this event');
+    expect(link.closest('a')).toHaveAttribute(
+      'href',
+      '/events/11111111-1111-1111-1111-111111111111/style',
+    );
+  });
 });

@@ -1,0 +1,65 @@
+package com.stylecast.event.styling;
+
+import com.stylecast.event.EventNotFoundException;
+import com.stylecast.event.EventRepository;
+import com.stylecast.event.styling.dto.EventStylePreferencesResponse;
+import com.stylecast.event.styling.dto.UpsertEventStylePreferencesRequest;
+import org.springframework.stereotype.Service;
+
+import java.time.Instant;
+import java.util.UUID;
+
+/**
+ * Application service for event styling preferences. Enforces the
+ * one-preferences-record-per-event rule: a {@code PUT} either creates the
+ * first record for an event or updates the existing one, never inserting a
+ * duplicate.
+ */
+@Service
+public class EventStylePreferencesService {
+
+    private final EventStylePreferencesRepository preferencesRepository;
+    private final EventRepository eventRepository;
+
+    public EventStylePreferencesService(
+            EventStylePreferencesRepository preferencesRepository, EventRepository eventRepository) {
+        this.preferencesRepository = preferencesRepository;
+        this.eventRepository = eventRepository;
+    }
+
+    public EventStylePreferencesResponse getPreferences(UUID eventId) {
+        requireEventExists(eventId);
+
+        EventStylePreferences preferences = preferencesRepository.findByEventId(eventId)
+                .orElseThrow(() -> new EventStylePreferencesNotFoundException(eventId));
+        return EventStylePreferencesResponse.fromEntity(preferences);
+    }
+
+    public EventStylePreferencesResponse upsertPreferences(
+            UUID eventId, UpsertEventStylePreferencesRequest request) {
+        requireEventExists(eventId);
+
+        Instant now = Instant.now();
+        EventStylePreferences preferences = preferencesRepository.findByEventId(eventId)
+                .orElseGet(() -> new EventStylePreferences(UUID.randomUUID(), eventId, now));
+
+        preferences.apply(
+                request.outfitRequest(),
+                request.maxBudget(),
+                request.clothingSize(),
+                request.shoeSize(),
+                request.preferredStyle(),
+                request.preferredColors(),
+                request.colorsToAvoid(),
+                now);
+
+        EventStylePreferences saved = preferencesRepository.save(preferences);
+        return EventStylePreferencesResponse.fromEntity(saved);
+    }
+
+    private void requireEventExists(UUID eventId) {
+        if (!eventRepository.existsById(eventId)) {
+            throw new EventNotFoundException(eventId);
+        }
+    }
+}

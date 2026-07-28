@@ -22,6 +22,14 @@ Implemented so far:
   event detail page at `/events/{eventId}`. Events are persisted in
   PostgreSQL via Flyway-managed schema, so they survive a browser refresh
   or backend restart.
+- An event styling workspace at `/events/{eventId}/style`, reachable via a
+  "Style this event" button on the event detail page. It shows the event's
+  details alongside placeholders for weather, occasion analysis, and
+  recommended looks (implemented in later tasks), and a preferences form
+  (outfit request, maximum budget, clothing size, shoe size, preferred
+  style, and optional preferred colors / colors to avoid). Preferences are
+  persisted per event in PostgreSQL; saving again updates the same record
+  instead of creating a duplicate.
 
 ### Manual event validation rules
 
@@ -34,6 +42,17 @@ Implemented so far:
   ordered chronologically by `startTime`.
 - Invalid requests return HTTP 400 with a structured error body (including
   per-field messages where applicable); an unknown event id returns 404.
+
+### Styling preferences validation rules
+
+- `outfitRequest`, `clothingSize`, `shoeSize`, and `preferredStyle` are
+  required; `preferredColors` and `colorsToAvoid` are optional.
+- `maxBudget` is required and must be greater than zero.
+- `preferredStyle` must be one of `CLASSIC`, `MODERN`, `MINIMAL`, `BOLD`,
+  `CASUAL`, `FORMAL`.
+- `GET`/`PUT /api/events/{eventId}/preferences` return 404 for an unknown
+  event id and 400 for a malformed event id; `GET` also returns 404 when the
+  event exists but has no saved preferences yet.
 
 ## Planned stack
 

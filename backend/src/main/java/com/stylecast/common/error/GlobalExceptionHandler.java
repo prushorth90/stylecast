@@ -2,6 +2,7 @@ package com.stylecast.common.error;
 
 import com.stylecast.event.EventNotFoundException;
 import com.stylecast.event.InvalidEventException;
+import com.stylecast.event.styling.EventStylePreferencesNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -80,6 +81,20 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(EventNotFoundException.class)
     public ResponseEntity<ApiError> handleEventNotFound(EventNotFoundException ex, HttpServletRequest request) {
+        ApiError body = new ApiError(
+                Instant.now(),
+                HttpStatus.NOT_FOUND.value(),
+                HttpStatus.NOT_FOUND.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI(),
+                null);
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
+    @ExceptionHandler(EventStylePreferencesNotFoundException.class)
+    public ResponseEntity<ApiError> handleEventStylePreferencesNotFound(
+            EventStylePreferencesNotFoundException ex, HttpServletRequest request) {
         ApiError body = new ApiError(
                 Instant.now(),
                 HttpStatus.NOT_FOUND.value(),
