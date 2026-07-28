@@ -51,6 +51,64 @@ GitHub Copilot cloud agent.
 - `docs/ARCHITECTURE.md`
 - `docs/ROADMAP.md`
 
+## Local development
+
+### Backend
+
+```bash
+cd backend
+./mvnw test                  # run backend tests
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+```
+
+The `local` profile expects PostgreSQL to be reachable on `localhost` (for
+example, the `postgres` service from `docker-compose.yml`, published on host
+port 5433). Start just the database with `docker compose up -d postgres`
+before running the backend this way.
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev          # start the Vite dev server (proxies /api to localhost:8080)
+npm run lint         # ESLint
+npm run typecheck    # TypeScript project build/check
+npm run test         # Vitest + React Testing Library
+npm run build        # production build
+```
+
+## Docker
+
+Copy `.env.example` to `.env` and adjust values if needed, then start the
+full stack:
+
+```bash
+docker compose up --build
+```
+
+Service URLs once the stack is running:
+
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8080
+- Backend health: http://localhost:8080/actuator/health
+- PostgreSQL: localhost:5433 (internally 5432 inside the `postgres` container)
+
+Useful commands:
+
+```bash
+docker compose config         # validate the Compose configuration
+docker compose ps             # view service status and health
+docker compose logs -f        # follow logs for all services
+docker compose logs -f backend
+docker compose down           # stop and remove containers (keeps the database volume)
+docker compose down -v        # stop and remove containers AND the database volume
+```
+
+**Warning:** `docker compose down -v` deletes the named PostgreSQL volume,
+which permanently deletes all local database data. Use plain `docker compose
+down` (without `-v`) if you want to keep your local data between runs.
+
 ## Development workflow
 
 1. Create a scoped GitHub issue.

@@ -1,0 +1,5 @@
+-- Initial baseline migration.
+--
+-- This project has no domain schema yet. This migration exists so that
+-- Flyway has a versioned baseline to run on startup. Future issues will
+-- add real migrations for domain tables (events, products, outfits, etc.).

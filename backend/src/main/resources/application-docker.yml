@@ -1,0 +1,8 @@
+# Profile used when the backend runs inside Docker Compose. The datasource
+# host is the Compose service name ("postgres"), never "localhost", since
+# each service runs in its own container on the Compose network.
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/${DB_NAME:stylecast}
+    username: ${DB_USER:stylecast}
+    password: ${DB_PASSWORD:stylecast}

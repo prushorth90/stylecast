@@ -1,0 +1,8 @@
+# Profile for running the backend directly on the host (e.g. `mvn spring-boot:run`)
+# against a locally running PostgreSQL instance, such as the one published by
+# docker-compose.yml on host port 5433.
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:${DB_PORT:5433}/${DB_NAME:stylecast}
+    username: ${DB_USER:stylecast}
+    password: ${DB_PASSWORD:stylecast}
