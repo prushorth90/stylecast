@@ -53,6 +53,25 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
         <dependency>
+            <!-- Provides the reactive WebClient used by RetailProductSearchProvider
+                 implementations to call external HTTP APIs. The app still runs as a
+                 plain Servlet application (spring-boot-starter-web wins auto-detection
+                 of spring.main.web-application-type when both are on the classpath);
+                 this dependency is only used for its blocking-call-capable WebClient. -->
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Spring Boot 4.1 moved WebClientAutoConfiguration (the bean that
+                 provides an injectable WebClient.Builder) out of spring-boot-webflux
+                 into this separate module - spring-boot-starter-webflux alone does
+                 NOT register a WebClient.Builder bean. Without this, injecting
+                 WebClient.Builder fails with UnsatisfiedDependencyException /
+                 "No qualifying bean of type ... WebClient$Builder". -->
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webclient</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>

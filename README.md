@@ -38,8 +38,67 @@ Implemented so far:
   real Nordstrom (or any other retailer's) inventory.** `/catalog` is not
   part of the outfit-recommendation flow; it exists to exercise and
   showcase the catalog API during development.
+- A live retail product-search provider (`com.stylecast.retail`) that finds
+  real, currently live `nordstrom.com` product pages using the OpenAI
+  Responses API's `web_search` tool, restricted to the `nordstrom.com`
+  domain. It is exercised through a temporary development endpoint,
+  `POST /api/dev/retail-products/search` - **not** a customer-facing search
+  page - and will be called automatically by the outfit-recommendation
+  engine in a later task. See "Live retail product search (development)"
+  below.
 
-### Manual event validation rules
+### Live retail product search (development)
+
+`POST /api/dev/retail-products/search` is a temporary, development-only
+endpoint for exercising the live Nordstrom product-search provider directly.
+It is not linked from any user-facing page and does not power outfit
+recommendations yet.
+
+**Results are search-derived, not verified inventory.** The provider only
+returns real `nordstrom.com` product-page URLs it found via web search;
+title comes from the search result itself, and price, size availability,
+and stock are **not** confirmed by StyleCast. Always confirm current price,
+size availability, and stock directly on nordstrom.com before relying on a
+result. Zero matches is a normal, valid outcome (HTTP 200 with an empty
+`candidates` list) - it does not mean an error occurred.
+
+#### Configure `OPENAI_API_KEY` locally
+
+1. Get an API key from <https://platform.openai.com/api-keys>.
+2. Copy `.env.example` to `.env` if you haven't already, and set
+   `OPENAI_API_KEY=sk-...` in your local `.env` (never commit a real key -
+   `.env` is gitignored).
+3. The application starts and runs normally with `OPENAI_API_KEY` unset or
+   blank; only calls to the endpoint above are affected, returning HTTP 503
+   with a clear "not configured" message until a real key is provided.
+
+#### Test the endpoint
+
+Locally (`./mvnw spring-boot:run -Dspring-boot.run.profiles=local`), either:
+
+- Open Swagger UI at <http://localhost:8080/swagger-ui.html> and try
+  `POST /api/dev/retail-products/search`, or
+- Use curl:
+
+  ```bash
+  curl -X POST http://localhost:8080/api/dev/retail-products/search \
+    -H "Content-Type: application/json" \
+    -d '{
+      "retailer": "NORDSTROM",
+      "category": "SUIT",
+      "keywords": ["navy", "wedding"],
+      "maxPrice": 600,
+      "clothingSize": "40R",
+      "limit": 5
+    }'
+  ```
+
+In Docker Compose, replace `localhost:8080` with the same host port the
+backend is published on (see "Docker" below); export `OPENAI_API_KEY` in
+your local `.env` before running `docker compose up` so the container picks
+it up.
+
+
 
 - `title` and `location` are required and must not be blank.
 - `startTime` and `endTime` are required, and `endTime` must be strictly

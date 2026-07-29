@@ -27,6 +27,10 @@ services:
       DB_NAME: ${DB_NAME:-stylecast}
       DB_USER: ${DB_USER:-stylecast}
       DB_PASSWORD: ${DB_PASSWORD:-stylecast}
+      # Optional - only required to use the temporary development endpoint
+      # POST /api/dev/retail-products/search. The app starts and runs
+      # normally without it.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
       - "8080:8080"
     depends_on:
