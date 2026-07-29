@@ -30,6 +30,14 @@ Implemented so far:
   style, and optional preferred colors / colors to avoid). Preferences are
   persisted per event in PostgreSQL; saving again updates the same record
   instead of creating a duplicate.
+- A deterministic, locally seeded product catalog (products, size/color
+  variants, and per-variant inventory), with a temporary development
+  catalog browser at `/catalog` for listing, filtering, and inspecting
+  products. **The catalog is demo data: all brands and products are
+  fictional, seeded directly into PostgreSQL via Flyway, and are not
+  real Nordstrom (or any other retailer's) inventory.** `/catalog` is not
+  part of the outfit-recommendation flow; it exists to exercise and
+  showcase the catalog API during development.
 
 ### Manual event validation rules
 
