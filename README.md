@@ -24,12 +24,17 @@ Implemented so far:
   or backend restart.
 - An event styling workspace at `/events/{eventId}/style`, reachable via a
   "Style this event" button on the event detail page. It shows the event's
-  details alongside placeholders for weather, occasion analysis, and
-  recommended looks (implemented in later tasks), and a preferences form
-  (outfit request, maximum budget, clothing size, shoe size, preferred
-  style, and optional preferred colors / colors to avoid). Preferences are
-  persisted per event in PostgreSQL; saving again updates the same record
-  instead of creating a duplicate.
+  details, a real event-time weather forecast (see "Event weather" below),
+  placeholders for occasion analysis and recommended looks (implemented in
+  later tasks), and a preferences form (outfit request, maximum budget,
+  clothing size, shoe size, preferred style, and optional preferred colors
+  / colors to avoid). Preferences are persisted per event in PostgreSQL;
+  saving again updates the same record instead of creating a duplicate.
+- Event-time weather (`com.stylecast.weather`): geocodes the event's
+  location and retrieves an hourly forecast covering the event's start and
+  end time from [Open-Meteo](https://open-meteo.com) (no API key required),
+  storing the latest result per event in PostgreSQL. See "Event weather"
+  below.
 - A deterministic, locally seeded product catalog (products, size/color
   variants, and per-variant inventory), with a temporary development
   catalog browser at `/catalog` for listing, filtering, and inspecting
@@ -120,6 +125,52 @@ it up.
 - `GET`/`PUT /api/events/{eventId}/preferences` return 404 for an unknown
   event id and 400 for a malformed event id; `GET` also returns 404 when the
   event exists but has no saved preferences yet.
+
+### Event weather
+
+Event-time weather is retrieved from [Open-Meteo](https://open-meteo.com),
+a free weather API that **requires no API key** - the feature works out of
+the box with no extra secrets, in every environment (local, Docker, CI).
+Weather always comes from this provider, never from the LLM.
+
+- `GET /api/events/{eventId}/weather` loads weather **automatically** - the
+  event styling page never requires a manual click before weather appears.
+  On first call it fetches from the provider and persists the result; while
+  the saved snapshot is still fresh (see below) it's returned as-is with no
+  provider call; once it's stale, `GET` transparently refreshes it. Returns
+  404 only for an unknown event id, 400 for a malformed event id.
+- **Freshness:** a saved snapshot is trusted for a configurable window
+  (`WEATHER_FRESHNESS_MINUTES`, default 180 = 3 hours) before `GET`
+  refreshes it again automatically.
+- **Stale fallback:** if an automatic refresh fails but a previous snapshot
+  exists, `GET` returns that previous snapshot with `stale: true` and a
+  `staleWarning` explaining why, instead of an error - the styling page
+  keeps showing the last known forecast rather than going blank. If refresh
+  fails and there is no previous snapshot, the provider error is returned
+  instead (see below).
+- `POST /api/events/{eventId}/weather/refresh` geocodes the event's
+  location, retrieves an hourly forecast covering the event's start and end
+  time, and always saves it as the event's latest snapshot (replacing any
+  previous one), regardless of freshness. The event styling page's
+  "Refresh Weather" button calls this endpoint for an explicit manual
+  update; unlike the automatic `GET` refresh, a failure here always
+  returns an error rather than falling back to stale data.
+- **Forecast horizon:** Open-Meteo can only forecast a limited number of
+  days ahead (16 by default, configurable via `WEATHER_FORECAST_HORIZON_DAYS`).
+  For an event further out than that, both endpoints return
+  `status: "FORECAST_UNAVAILABLE"` with no fabricated temperature/wind/
+  precipitation values (all `null`) - the styling page shows a clear
+  "Forecast not yet available" message instead.
+- **Unresolvable location:** if the event's location text can't be geocoded,
+  and there is no previous snapshot to fall back to, refreshing returns
+  HTTP 422 with a clear message instead of guessing coordinates.
+- **Provider failure:** a network/timeout error or non-success response
+  from Open-Meteo, with no previous snapshot to fall back to, returns
+  HTTP 503 rather than silently fabricating data.
+- Automated tests never call the real Open-Meteo API - they use a local
+  fake HTTP server or fake provider beans instead (see backend test
+  classes under `com.stylecast.weather`).
+
 
 ## Planned stack
 

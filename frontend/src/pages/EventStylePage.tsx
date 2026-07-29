@@ -8,8 +8,10 @@ import Divider from '@mui/material/Divider';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import { Link as RouterLink, useParams } from 'react-router-dom';
+import { EventWeatherCard } from '../components/styling/EventWeatherCard';
 import { StylePreferencesForm } from '../components/styling/StylePreferencesForm';
 import { useEvent } from '../hooks/useEvents';
+import { useEventWeather } from '../hooks/useEventWeather';
 import { useEventStylePreferences } from '../hooks/useStylePreferences';
 
 function formatDateTime(value: string): string {
@@ -20,9 +22,10 @@ function formatDateTime(value: string): string {
 }
 
 /**
- * Event styling page. Shows the selected event's details, placeholders for
- * work that later tasks will implement (weather, occasion analysis,
- * recommended looks), and a form for the event's styling preferences.
+ * Event styling page. Shows the selected event's details, its saved weather
+ * snapshot (with a manual refresh action), placeholders for work that later
+ * tasks will implement (occasion analysis, recommended looks), and a form
+ * for the event's styling preferences.
  */
 export function EventStylePage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -34,6 +37,11 @@ export function EventStylePage() {
     isError: isPreferencesError,
     error: preferencesError,
   } = useEventStylePreferences(eventId);
+  const {
+    data: weather,
+    isPending: isWeatherPending,
+    isError: isWeatherError,
+  } = useEventWeather(eventId);
 
   if (isEventPending) {
     return (
@@ -77,15 +85,21 @@ export function EventStylePage() {
         </Stack>
       </Stack>
 
+      {event.id && (
+        <EventWeatherCard
+          eventId={event.id}
+          weather={weather}
+          isLoading={isWeatherPending}
+          isError={isWeatherError}
+        />
+      )}
+
       <Card variant="outlined">
         <CardContent>
           <Typography variant="h6" component="h2" gutterBottom>
             Status
           </Typography>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-            <Alert severity="info" sx={{ flex: 1 }}>
-              Weather: coming in a later task.
-            </Alert>
             <Alert severity="info" sx={{ flex: 1 }}>
               Occasion analysis: coming in a later task.
             </Alert>
