@@ -25,16 +25,22 @@ Implemented so far:
 - An event styling workspace at `/events/{eventId}/style`, reachable via a
   "Style this event" button on the event detail page. It shows the event's
   details, a real event-time weather forecast (see "Event weather" below),
-  placeholders for occasion analysis and recommended looks (implemented in
-  later tasks), and a preferences form (outfit request, maximum budget,
-  clothing size, shoe size, preferred style, and optional preferred colors
-  / colors to avoid). Preferences are persisted per event in PostgreSQL;
-  saving again updates the same record instead of creating a duplicate.
+  a structured occasion interpretation (see "Occasion interpretation"
+  below), a placeholder for recommended looks (implemented in a later
+  task), and a preferences form (outfit request, maximum budget, clothing
+  size, shoe size, preferred style, and optional preferred colors / colors
+  to avoid). Preferences are persisted per event in PostgreSQL; saving
+  again updates the same record instead of creating a duplicate.
 - Event-time weather (`com.stylecast.weather`): geocodes the event's
   location and retrieves an hourly forecast covering the event's start and
   end time from [Open-Meteo](https://open-meteo.com) (no API key required),
   storing the latest result per event in PostgreSQL. See "Event weather"
   below.
+- Structured occasion interpretation (`com.stylecast.occasion`): classifies
+  an event's occasion, dress code, formality, product categories, colors,
+  and special requirements from its title, description, setting, dress
+  code, and saved preferences - never from live weather or invented
+  products. See "Occasion interpretation" below.
 - A deterministic, locally seeded product catalog (products, size/color
   variants, and per-variant inventory), with a temporary development
   catalog browser at `/catalog` for listing, filtering, and inspecting
@@ -76,6 +82,9 @@ result. Zero matches is a normal, valid outcome (HTTP 200 with an empty
 3. The application starts and runs normally with `OPENAI_API_KEY` unset or
    blank; only calls to the endpoint above are affected, returning HTTP 503
    with a clear "not configured" message until a real key is provided.
+4. This same `OPENAI_API_KEY` is also used by occasion interpretation (see
+   "Occasion interpretation" below) - the styling page works fine without
+   it too, automatically using its rule-based fallback classifier instead.
 
 #### Test the endpoint
 
@@ -170,6 +179,57 @@ Weather always comes from this provider, never from the LLM.
 - Automated tests never call the real Open-Meteo API - they use a local
   fake HTTP server or fake provider beans instead (see backend test
   classes under `com.stylecast.weather`).
+
+### Occasion interpretation
+
+Occasion interpretation (`com.stylecast.occasion`) converts an event's
+title, description, indoor/outdoor setting, manually entered dress code,
+and saved styling preferences (outfit request, preferred style, preferred
+colors, colors to avoid) into a structured, validated interpretation:
+occasion, dress code, formality level (1-10), required/optional product
+categories, preferred colors, colors to avoid, special requirements,
+assumptions, and confidence (0-1). **This task only classifies the
+occasion - it never searches for or selects products, assembles outfits,
+or invents product names, URLs, prices, or inventory.**
+
+- `GET /api/events/{eventId}/interpretation` loads the interpretation
+  **automatically** - the event styling page never requires a manual click
+  before it appears. On first call it classifies and persists the result;
+  every later call returns the same saved interpretation as-is (it does not
+  re-classify on its own). Returns 404 for an unknown event id, 400 for a
+  malformed event id.
+- `POST /api/events/{eventId}/interpretation/regenerate` always re-runs
+  classification against the event's current details and preferences and
+  overwrites the existing interpretation (same id, new `generatedAt`) -
+  it never creates a duplicate row. The event styling page's "Regenerate
+  Interpretation" button calls this endpoint.
+- **AI classification:** when `OPENAI_API_KEY` is configured, an
+  OpenAI Responses API call (structured JSON-schema output, low
+  temperature) classifies the occasion. The response is validated before
+  it is ever persisted - unknown enum values, an out-of-range formality
+  level (must be 1-10), or an out-of-range confidence (must be 0-1) are all
+  rejected, never saved.
+- **Rule-based fallback:** if `OPENAI_API_KEY` is not configured, or the AI
+  call fails, times out, or returns output that fails validation, a
+  deterministic keyword-based classifier is used instead (recognizing
+  keywords like wedding, interview, dinner, networking, conference,
+  concert, cocktail, formal, and black tie in the event's own text). This
+  is marked with `source: "RULE_BASED_FALLBACK"` in the response and always
+  reports a lower `confidence` than a successful AI classification. **The
+  application starts and this endpoint works normally with no
+  `OPENAI_API_KEY` set at all** - every classification just uses the
+  rule-based fallback.
+- **No live weather is ever used or invented:** the classifier's input
+  never includes a weather forecast, and its prompt explicitly instructs
+  the model not to invent current or forecasted conditions. A
+  weather-related special requirement (e.g. rain, heat, or cold
+  suitability) can only come from the event's own explicit text (e.g. an
+  outdoor setting, or a season/condition mentioned in the title or
+  description) - never from `com.stylecast.weather` or a model guess.
+- Automated tests never call the real OpenAI API - they use a local fake
+  HTTP server, fake classifier beans, or exercise the deterministic
+  rule-based classifier directly (see backend test classes under
+  `com.stylecast.occasion`).
 
 
 ## Planned stack

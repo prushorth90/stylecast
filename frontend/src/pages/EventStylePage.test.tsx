@@ -89,6 +89,48 @@ function weatherErrorResponse() {
   });
 }
 
+function interpretationResponse(overrides: Record<string, unknown> = {}) {
+  return new Response(
+    JSON.stringify({
+      id: '44444444-4444-4444-4444-444444444444',
+      eventId: EVENT_ID,
+      occasion: 'WEDDING',
+      dressCode: 'GARDEN_COCKTAIL',
+      formalityLevel: 8,
+      requiredCategories: ['SUIT', 'SHOES'],
+      optionalCategories: ['ACCESSORY'],
+      preferredColors: ['navy'],
+      colorsToAvoid: ['neon green'],
+      specialRequirements: ['OUTDOOR_SUITABLE'],
+      assumptions: ['Outdoor garden wedding implies cocktail-adjacent formality.'],
+      confidence: 0.88,
+      source: 'AI',
+      generatedAt: '2026-07-28T12:00:00Z',
+      createdAt: '2026-07-28T12:00:00Z',
+      updatedAt: '2026-07-28T12:00:00Z',
+      ...overrides,
+    }),
+    { status: 200 },
+  );
+}
+
+function ruleBasedInterpretationResponse(overrides: Record<string, unknown> = {}) {
+  return interpretationResponse({
+    formalityLevel: 8,
+    confidence: 0.45,
+    source: 'RULE_BASED_FALLBACK',
+    assumptions: ['Classified using keyword matching against event text; no live weather data was used.'],
+    ...overrides,
+  });
+}
+
+function interpretationErrorResponse() {
+  return new Response(
+    JSON.stringify({ message: 'Occasion interpretation is temporarily unavailable', fieldErrors: null }),
+    { status: 503 },
+  );
+}
+
 function preferencesResponse(overrides: Record<string, unknown> = {}) {
   return new Response(
     JSON.stringify({
@@ -107,6 +149,21 @@ function preferencesResponse(overrides: Record<string, unknown> = {}) {
     }),
     { status: 200 },
   );
+}
+
+/** Default routing shared by most tests: real per-endpoint fixtures unless a test overrides them. */
+function defaultFetchRouter(input: RequestInfo | URL): Promise<Response> {
+  const url = input.toString();
+  if (url.includes('/interpretation')) {
+    return Promise.resolve(interpretationResponse());
+  }
+  if (url.includes('/weather')) {
+    return Promise.resolve(weatherAvailableResponse());
+  }
+  if (url.includes('/preferences')) {
+    return Promise.resolve(notFoundResponse());
+  }
+  return Promise.resolve(eventResponse());
 }
 
 function renderPage() {
@@ -172,16 +229,7 @@ describe('EventStylePage', () => {
   });
 
   it('shows a blank form when the event has no saved preferences yet', async () => {
-    vi.mocked(fetch).mockImplementation((input) => {
-      const url = input.toString();
-      if (url.includes('/weather')) {
-        return Promise.resolve(weatherAvailableResponse());
-      }
-      if (url.includes('/preferences')) {
-        return Promise.resolve(notFoundResponse());
-      }
-      return Promise.resolve(eventResponse());
-    });
+    vi.mocked(fetch).mockImplementation((input) => defaultFetchRouter(input));
 
     renderPage();
 
@@ -192,6 +240,9 @@ describe('EventStylePage', () => {
   it('populates the form with existing preferences', async () => {
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
       if (url.includes('/weather')) {
         return Promise.resolve(weatherAvailableResponse());
       }
@@ -212,16 +263,7 @@ describe('EventStylePage', () => {
   });
 
   it('shows validation errors when required fields are missing', async () => {
-    vi.mocked(fetch).mockImplementation((input) => {
-      const url = input.toString();
-      if (url.includes('/weather')) {
-        return Promise.resolve(weatherAvailableResponse());
-      }
-      if (url.includes('/preferences')) {
-        return Promise.resolve(notFoundResponse());
-      }
-      return Promise.resolve(eventResponse());
-    });
+    vi.mocked(fetch).mockImplementation((input) => defaultFetchRouter(input));
 
     const user = userEvent.setup();
     renderPage();
@@ -238,16 +280,7 @@ describe('EventStylePage', () => {
   });
 
   it('shows a validation error for a zero or negative budget', async () => {
-    vi.mocked(fetch).mockImplementation((input) => {
-      const url = input.toString();
-      if (url.includes('/weather')) {
-        return Promise.resolve(weatherAvailableResponse());
-      }
-      if (url.includes('/preferences')) {
-        return Promise.resolve(notFoundResponse());
-      }
-      return Promise.resolve(eventResponse());
-    });
+    vi.mocked(fetch).mockImplementation((input) => defaultFetchRouter(input));
 
     const user = userEvent.setup();
     renderPage();
@@ -267,6 +300,9 @@ describe('EventStylePage', () => {
   it('saves preferences for the first time and shows a success message', async () => {
     vi.mocked(fetch).mockImplementation((input, init) => {
       const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
       if (url.includes('/weather')) {
         return Promise.resolve(weatherAvailableResponse());
       }
@@ -297,6 +333,9 @@ describe('EventStylePage', () => {
     let putCallCount = 0;
     vi.mocked(fetch).mockImplementation((input, init) => {
       const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
       if (url.includes('/weather')) {
         return Promise.resolve(weatherAvailableResponse());
       }
@@ -330,6 +369,9 @@ describe('EventStylePage', () => {
   it('shows a loading state for weather while it is being fetched', async () => {
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
       if (url.includes('/weather')) {
         return new Promise(() => {});
       }
@@ -345,16 +387,7 @@ describe('EventStylePage', () => {
   });
 
   it('shows the available forecast details automatically, without any user click', async () => {
-    vi.mocked(fetch).mockImplementation((input) => {
-      const url = input.toString();
-      if (url.includes('/weather')) {
-        return Promise.resolve(weatherAvailableResponse());
-      }
-      if (url.includes('/preferences')) {
-        return Promise.resolve(notFoundResponse());
-      }
-      return Promise.resolve(eventResponse());
-    });
+    vi.mocked(fetch).mockImplementation((input) => defaultFetchRouter(input));
 
     renderPage();
 
@@ -374,6 +407,9 @@ describe('EventStylePage', () => {
   it('shows a forecast-unavailable state for a distant event', async () => {
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
       if (url.includes('/weather')) {
         return Promise.resolve(weatherUnavailableResponse());
       }
@@ -391,6 +427,9 @@ describe('EventStylePage', () => {
   it('shows an error state when the initial automatic weather load fails, without breaking the rest of the page', async () => {
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
       if (url.includes('/weather')) {
         return Promise.resolve(weatherErrorResponse());
       }
@@ -411,6 +450,9 @@ describe('EventStylePage', () => {
   it('shows a provider-error state when refreshing weather fails, without breaking the rest of the page', async () => {
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
       if (url.includes('/weather/refresh')) {
         return Promise.resolve(weatherErrorResponse());
       }
@@ -439,6 +481,9 @@ describe('EventStylePage', () => {
     let resolveRefresh: (value: Response) => void = () => {};
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
       if (url.includes('/weather/refresh')) {
         return new Promise((resolve) => {
           resolveRefresh = resolve;
@@ -470,6 +515,9 @@ describe('EventStylePage', () => {
     let refreshCallCount = 0;
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
       if (url.includes('/weather/refresh')) {
         refreshCallCount += 1;
         return Promise.resolve(weatherAvailableResponse({ temperatureAtStart: 30, condition: 'Sunny' }));
@@ -496,5 +544,180 @@ describe('EventStylePage', () => {
       expect.objectContaining({ method: 'POST' }),
     );
     expect(refreshCallCount).toBe(1);
+  });
+
+  // --- Occasion interpretation ------------------------------------------------
+
+  it('shows a loading state for the occasion interpretation while it is being generated', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return new Promise(() => {});
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Interpreting occasion…')).toBeInTheDocument();
+  });
+
+  it('shows a successful AI interpretation automatically, without any user click', async () => {
+    vi.mocked(fetch).mockImplementation((input) => defaultFetchRouter(input));
+
+    renderPage();
+
+    expect(await screen.findByText('AI interpretation')).toBeInTheDocument();
+    expect(screen.getByText('Wedding')).toBeInTheDocument();
+    expect(screen.getByText('Garden Cocktail')).toBeInTheDocument();
+    expect(screen.getByText('8 / 10')).toBeInTheDocument();
+    expect(screen.getByText('88%')).toBeInTheDocument();
+    expect(screen.getByText(/Generated/)).toBeInTheDocument();
+    // Auto-loaded via GET - no manual regenerate click happened.
+    expect(fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/interpretation/regenerate'),
+      expect.anything(),
+    );
+  });
+
+  it('shows a rule-based fallback source label', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(ruleBasedInterpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Rule-based fallback')).toBeInTheDocument();
+  });
+
+  it('displays required and optional categories', async () => {
+    vi.mocked(fetch).mockImplementation((input) => defaultFetchRouter(input));
+
+    renderPage();
+
+    await screen.findByText('AI interpretation');
+    expect(screen.getByText('Suit')).toBeInTheDocument();
+    expect(screen.getByText('Shoes')).toBeInTheDocument();
+    expect(screen.getByText('Accessory')).toBeInTheDocument();
+  });
+
+  it('displays assumptions and confidence', async () => {
+    vi.mocked(fetch).mockImplementation((input) => defaultFetchRouter(input));
+
+    renderPage();
+
+    expect(await screen.findByText('88%')).toBeInTheDocument();
+    expect(
+      screen.getByText('Outdoor garden wedding implies cocktail-adjacent formality.'),
+    ).toBeInTheDocument();
+  });
+
+  it('regenerates the interpretation via POST and replaces the previously displayed data', async () => {
+    let regenerateCallCount = 0;
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation/regenerate')) {
+        regenerateCallCount += 1;
+        return Promise.resolve(interpretationResponse({ formalityLevel: 9, confidence: 0.93 }));
+      }
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('8 / 10');
+    await user.click(screen.getByText('Regenerate Interpretation'));
+
+    expect(await screen.findByText('9 / 10')).toBeInTheDocument();
+    expect(screen.getByText('93%')).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/events/${EVENT_ID}/interpretation/regenerate`),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(regenerateCallCount).toBe(1);
+  });
+
+  it('disables the regenerate button while regeneration is in progress', async () => {
+    let resolveRegenerate: (value: Response) => void = () => {};
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation/regenerate')) {
+        return new Promise((resolve) => {
+          resolveRegenerate = resolve;
+        });
+      }
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('8 / 10');
+    await user.click(screen.getByText('Regenerate Interpretation'));
+
+    const regeneratingButton = await screen.findByText('Regenerating…');
+    expect(regeneratingButton.closest('button')).toBeDisabled();
+
+    resolveRegenerate(interpretationResponse({ formalityLevel: 9 }));
+    await screen.findByText('9 / 10');
+  });
+
+  it('shows an error state when the interpretation fails, without breaking the rest of the page', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationErrorResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    renderPage();
+
+    expect(await screen.findByText(/Unable to load the occasion interpretation/)).toBeInTheDocument();
+    // The rest of the page (event details, weather, preferences form) must still work.
+    expect(screen.getByText(/Birthday party/)).toBeInTheDocument();
+    expect(await screen.findByText('Partly cloudy')).toBeInTheDocument();
+    expect(await screen.findByLabelText(labelMatcher('Outfit request'))).toBeInTheDocument();
   });
 });

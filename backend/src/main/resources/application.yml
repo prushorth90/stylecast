@@ -28,6 +28,17 @@ stylecast:
     connect-timeout-ms: ${RETAIL_SEARCH_CONNECT_TIMEOUT_MS:5000}
     read-timeout-ms: ${RETAIL_SEARCH_READ_TIMEOUT_MS:15000}
     max-result-limit: ${RETAIL_SEARCH_MAX_RESULTS:25}
+  occasion-classifier:
+    # Reuses OPENAI_API_KEY / OPENAI_API_BASE_URL (same OpenAI account as
+    # retail-search above). No default API key - the app must start fine
+    # without this set; OccasionInterpretationService falls back to
+    # RuleBasedOccasionClassifier whenever OpenAiOccasionClassifier throws
+    # (including a blank key), so classification always succeeds either way.
+    openai-api-key: ${OPENAI_API_KEY:}
+    openai-model: ${OCCASION_CLASSIFIER_MODEL:gpt-4.1}
+    base-url: ${OPENAI_API_BASE_URL:https://api.openai.com/v1}
+    connect-timeout-ms: ${OCCASION_CLASSIFIER_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${OCCASION_CLASSIFIER_READ_TIMEOUT_MS:15000}
   weather:
     # Open-Meteo (https://open-meteo.com) requires no API key, so event-time
     # weather works out of the box with no extra secrets. Base URLs are
