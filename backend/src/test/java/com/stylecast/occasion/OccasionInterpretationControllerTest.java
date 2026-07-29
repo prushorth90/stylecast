@@ -21,6 +21,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -123,7 +124,12 @@ class OccasionInterpretationControllerTest {
         assertThat(first).isNotNull();
         assertThat(second).isNotNull();
         assertThat(second.id()).isEqualTo(first.id());
-        assertThat(second.generatedAt()).isEqualTo(first.generatedAt());
+        // Compare truncated to microseconds: the first response may still carry the
+        // original nanosecond-precision Instant from before it was ever persisted, while
+        // the second response is read back from PostgreSQL's TIMESTAMPTZ column, which
+        // only stores microsecond precision - both refer to the same saved row/value.
+        assertThat(second.generatedAt().truncatedTo(ChronoUnit.MICROS))
+                .isEqualTo(first.generatedAt().truncatedTo(ChronoUnit.MICROS));
         assertThat(interpretationRepository.findAll()).hasSize(1);
     }
 
