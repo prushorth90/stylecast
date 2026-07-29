@@ -27,6 +27,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -203,7 +204,10 @@ class EventWeatherControllerTest {
 
     @Test
     void getWeather_withStaleSnapshotAndRefreshFailure_returnsPreviousSnapshotMarkedStale() {
-        Instant staleRetrievedAt = Instant.now().minus(Duration.ofHours(4));
+        // Truncated to microseconds: PostgreSQL's TIMESTAMPTZ column only stores
+        // microsecond precision, so a nanosecond-precision Instant.now() would
+        // never compare equal to the value reloaded from the database below.
+        Instant staleRetrievedAt = Instant.now().minus(Duration.ofHours(4)).truncatedTo(ChronoUnit.MICROS);
         EventWeatherSnapshot snapshot = new EventWeatherSnapshot(UUID.randomUUID(), eventId, staleRetrievedAt);
         snapshot.markAvailable(
                 new GeocodedLocation("Old location", new GeoCoordinates(10.0, 20.0)),
