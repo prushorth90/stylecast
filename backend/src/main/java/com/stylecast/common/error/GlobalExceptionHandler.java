@@ -7,6 +7,9 @@ import com.stylecast.event.InvalidEventException;
 import com.stylecast.event.styling.EventStylePreferencesNotFoundException;
 import com.stylecast.retail.InvalidRetailSearchRequestException;
 import com.stylecast.retail.ProductSearchProviderException;
+import com.stylecast.weather.GeocodingProviderException;
+import com.stylecast.weather.UnresolvableLocationException;
+import com.stylecast.weather.WeatherProviderException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -158,6 +161,35 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleProductSearchProviderUnavailable(
             ProductSearchProviderException ex, HttpServletRequest request) {
         log.warn("Retail product search provider unavailable handling {} {}: {}",
+                request.getMethod(), request.getRequestURI(), ex.getMessage());
+        ApiError body = new ApiError(
+                Instant.now(),
+                HttpStatus.SERVICE_UNAVAILABLE.value(),
+                HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI(),
+                null);
+
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
+    }
+
+    @ExceptionHandler(UnresolvableLocationException.class)
+    public ResponseEntity<ApiError> handleUnresolvableLocation(
+            UnresolvableLocationException ex, HttpServletRequest request) {
+        ApiError body = new ApiError(
+                Instant.now(),
+                HttpStatus.UNPROCESSABLE_CONTENT.value(),
+                HttpStatus.UNPROCESSABLE_CONTENT.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI(),
+                null);
+
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_CONTENT).body(body);
+    }
+
+    @ExceptionHandler({GeocodingProviderException.class, WeatherProviderException.class})
+    public ResponseEntity<ApiError> handleWeatherProviderUnavailable(RuntimeException ex, HttpServletRequest request) {
+        log.warn("Weather provider unavailable handling {} {}: {}",
                 request.getMethod(), request.getRequestURI(), ex.getMessage());
         ApiError body = new ApiError(
                 Instant.now(),

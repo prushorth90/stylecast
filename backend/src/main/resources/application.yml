@@ -28,6 +28,19 @@ stylecast:
     connect-timeout-ms: ${RETAIL_SEARCH_CONNECT_TIMEOUT_MS:5000}
     read-timeout-ms: ${RETAIL_SEARCH_READ_TIMEOUT_MS:15000}
     max-result-limit: ${RETAIL_SEARCH_MAX_RESULTS:25}
+  weather:
+    # Open-Meteo (https://open-meteo.com) requires no API key, so event-time
+    # weather works out of the box with no extra secrets. Base URLs are
+    # overridden in tests to point at a local fake HTTP server instead.
+    geocoding-base-url: ${WEATHER_GEOCODING_BASE_URL:https://geocoding-api.open-meteo.com}
+    forecast-base-url: ${WEATHER_FORECAST_BASE_URL:https://api.open-meteo.com}
+    connect-timeout-ms: ${WEATHER_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${WEATHER_READ_TIMEOUT_MS:10000}
+    forecast-horizon-days: ${WEATHER_FORECAST_HORIZON_DAYS:16}
+    # How long a saved snapshot is trusted before GET /weather transparently
+    # refreshes it (default 3 hours).
+    freshness-minutes: ${WEATHER_FRESHNESS_MINUTES:180}
+    provider-name: OPEN_METEO
 
 springdoc:
   api-docs:
