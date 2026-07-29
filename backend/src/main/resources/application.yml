@@ -17,6 +17,18 @@ management:
     health:
       show-details: when-authorized
 
+stylecast:
+  retail-search:
+    # No default value - the app must start fine without this set (Task 4B
+    # requirement). OpenAiNordstromProductSearchProvider returns a clear
+    # ProductSearchProviderException (mapped to HTTP 503) when it is blank.
+    openai-api-key: ${OPENAI_API_KEY:}
+    openai-model: ${OPENAI_RETAIL_SEARCH_MODEL:gpt-4.1}
+    base-url: ${OPENAI_API_BASE_URL:https://api.openai.com/v1}
+    connect-timeout-ms: ${RETAIL_SEARCH_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${RETAIL_SEARCH_READ_TIMEOUT_MS:15000}
+    max-result-limit: ${RETAIL_SEARCH_MAX_RESULTS:25}
+
 springdoc:
   api-docs:
     path: /v3/api-docs

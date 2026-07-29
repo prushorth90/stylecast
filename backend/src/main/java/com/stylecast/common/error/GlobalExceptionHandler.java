@@ -5,6 +5,8 @@ import com.stylecast.catalog.ProductNotFoundException;
 import com.stylecast.event.EventNotFoundException;
 import com.stylecast.event.InvalidEventException;
 import com.stylecast.event.styling.EventStylePreferencesNotFoundException;
+import com.stylecast.retail.InvalidRetailSearchRequestException;
+import com.stylecast.retail.ProductSearchProviderException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -136,6 +138,36 @@ public class GlobalExceptionHandler {
                 null);
 
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(InvalidRetailSearchRequestException.class)
+    public ResponseEntity<ApiError> handleInvalidRetailSearchRequest(
+            InvalidRetailSearchRequestException ex, HttpServletRequest request) {
+        ApiError body = new ApiError(
+                Instant.now(),
+                HttpStatus.BAD_REQUEST.value(),
+                HttpStatus.BAD_REQUEST.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI(),
+                null);
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(ProductSearchProviderException.class)
+    public ResponseEntity<ApiError> handleProductSearchProviderUnavailable(
+            ProductSearchProviderException ex, HttpServletRequest request) {
+        log.warn("Retail product search provider unavailable handling {} {}: {}",
+                request.getMethod(), request.getRequestURI(), ex.getMessage());
+        ApiError body = new ApiError(
+                Instant.now(),
+                HttpStatus.SERVICE_UNAVAILABLE.value(),
+                HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI(),
+                null);
+
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
     }
 
     @ExceptionHandler(Exception.class)
