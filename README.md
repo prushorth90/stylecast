@@ -52,27 +52,37 @@ Implemented so far:
 - A live retail product-search provider (`com.stylecast.retail`) that finds
   real, currently live `nordstrom.com` product pages using the OpenAI
   Responses API's `web_search` tool, restricted to the `nordstrom.com`
-  domain. It is exercised through a temporary development endpoint,
-  `POST /api/dev/retail-products/search` - **not** a customer-facing search
-  page - and will be called automatically by the outfit-recommendation
-  engine in a later task. See "Live retail product search (development)"
-  below.
-- A deterministic outfit-recommendation engine (`com.stylecast.recommendation`,
-  Task 7A) that assembles up to three complete, ranked outfits for an event
-  from the local product catalog only - budget, sizes, stock, active
-  status, avoided colors, formality, and weather are all enforced as hard
-  constraints, with deterministic 0-100 scores for occasion/weather/style/
-  color fit, budget efficiency, and completeness used to rank results. The
-  event styling page's "Generate Looks" button and recommendation summary
-  cards are a temporary integration, not the final mood-board design. See
-  "Outfit recommendations" below.
+  domain. It is exercised directly through a temporary development
+  endpoint, `POST /api/dev/retail-products/search` - **not** a
+  customer-facing search page - and is also called automatically by the
+  live outfit-recommendation flow (see below). See "Live retail product
+  search (development)" below.
+- A deterministic, local-catalog-only outfit-recommendation engine
+  (`com.stylecast.recommendation`, Task 7A) that assembles up to three
+  complete, ranked outfits for an event from the local product catalog -
+  budget, sizes, stock, active status, avoided colors, formality, and
+  weather are all enforced as hard constraints, with deterministic 0-100
+  scores for occasion/weather/style/color fit, budget efficiency, and
+  completeness used to rank results. Still available at
+  `POST /api/events/{eventId}/recommendations/generate`, but no longer
+  wired to the styling page's "Generate Looks" button. See "Outfit
+  recommendations" below.
+- A live-Nordstrom outfit-recommendation flow (`com.stylecast.recommendation`,
+  Task 8) that is what the event styling page's "Generate Looks" button
+  now calls: it derives the event's required garment categories, issues
+  one targeted, automatically-built `com.stylecast.retail` search per
+  category, and assembles up to three outfits from the real `nordstrom.com`
+  candidates found - never from the local catalog. See "Live outfit
+  recommendations" below.
 
 ### Live retail product search (development)
 
 `POST /api/dev/retail-products/search` is a temporary, development-only
 endpoint for exercising the live Nordstrom product-search provider directly.
-It is not linked from any user-facing page and does not power outfit
-recommendations yet.
+It is not linked from any user-facing page. The same provider now also
+powers the live outfit-recommendation flow described in "Live outfit
+recommendations" below - this endpoint remains useful for testing a single
+search request in isolation.
 
 **Results are search-derived, not verified inventory.** The provider only
 returns real `nordstrom.com` product-page URLs it found via web search;
@@ -240,14 +250,104 @@ or invents product names, URLs, prices, or inventory.**
   rule-based classifier directly (see backend test classes under
   `com.stylecast.occasion`).
 
-### Outfit recommendations
+### Live outfit recommendations
 
-`com.stylecast.recommendation` deterministically assembles up to three
-complete outfits for an event from **the local product catalog only**. It
-never calls the live Nordstrom search provider, OpenAI, or any other LLM -
-every product, price, and variant it returns comes directly from the
-catalog seeded into PostgreSQL, and **all catalog products are fictional
-demo data**, not real Nordstrom (or any other retailer's) inventory.
+`com.stylecast.recommendation` also assembles up to three outfits for an
+event from **live `nordstrom.com` search results** (via
+`com.stylecast.retail`) instead of the local catalog. This is what the
+event styling page's "Generate Looks" button calls.
+
+**Required prerequisites** are the same as the local-catalog engine below:
+saved styling preferences, an occasion interpretation, and (optionally) the
+latest weather snapshot. Calling generate before preferences or an
+interpretation exist returns HTTP 409.
+
+- `POST /api/events/{eventId}/recommendations/live/generate` derives the
+  event's required garment categories (from the occasion interpretation,
+  always including shoes) and searches **each one independently** - a
+  targeted Nordstrom search per category, automatically built (keywords,
+  deterministic per-category synonyms - e.g. `TROUSERS` also searches
+  "dress pants"/"pants"/"chinos" - size hint, and an even budget split
+  across categories; **the user never constructs a search themselves**).
+  A search failure for one category never discards candidates already
+  found for another. Up to three outfits are assembled from whichever
+  categories found candidates and persisted as a new, versioned
+  "generation", the same versioning scheme the local-catalog engine uses.
+- `POST /api/events/{eventId}/recommendations/live/retry-missing`
+  re-searches **only** the categories the latest generation was missing,
+  reusing the candidates already found for every other category (no
+  repeated search calls for categories that already succeeded) - bounds
+  the added API cost of a retry to just the gap. A no-op (no search calls
+  at all) when nothing was missing.
+- `GET /api/events/{eventId}/recommendations/live` returns the event's
+  current (latest generation) live recommendations. **It never triggers a
+  live search on its own** - only `generate`/`retry-missing` do.
+- **Every generation reports a `status`:**
+  - `COMPLETE` - every required category found candidates.
+  - `PARTIAL` - some categories found candidates and some did not; valid
+    Nordstrom candidates (with working product links) are still returned
+    for the categories that succeeded, alongside `foundCategories`/
+    `missingCategories` and a clear message (e.g. *"We found items for
+    Shirt and Shoes, but no matching Trousers."*) - **never presented as a
+    complete outfit**. The styling page offers a "Retry Missing Items"
+    action for this case.
+  - `NO_RESULTS` - every required category was searched successfully but
+    none found anything; a normal, non-error outcome, never a fabricated
+    outfit.
+  - `PROVIDER_UNAVAILABLE` - every attempted category search failed at the
+    provider level (a transient outage, not a genuine "nothing found"
+    result) - shown as a distinct, clear message from `NO_RESULTS`.
+- **Candidates never mix departments unless the user explicitly allows
+  it:** each event's saved styling preferences include a required `shoppingDepartment`
+  ("Shop from": Men's / Women's / Gender-neutral / Unisex / No preference),
+  which is the sole source of the live search's department constraint
+  (`men's`/`mens`, `women's`/`womens`, or `unisex`/`gender-neutral` keywords
+  are added to the generated search accordingly; "No preference" adds none).
+  Each candidate's title (and, once independently confirmed, an explicit
+  breadcrumb/taxonomy/department label from product-detail enrichment - never
+  an image) is classified into a normalized department/audience, and any
+  candidate whose classification is the explicit opposite department of a
+  men's- or women's-constrained search is rejected - this is what prevents a
+  men's outfit from including women's ballet flats, or a women's outfit from
+  including men's dress shoes.
+- **Price, size, and availability are only ever shown when independently
+  confirmed:** after finding a valid `nordstrom.com` product URL, StyleCast
+  attempts a bounded, narrowly-scoped **product-detail enrichment** step -
+  a second OpenAI Responses API call (still using the same `web_search`
+  tool restricted to `nordstrom.com`, never a direct fetch of the
+  Nordstrom page - see "Retail boundaries" below) that reports brand,
+  name, current/original price, currency, image, color, sizes, stock
+  text, and department **only if the response actually cites the exact
+  requested product URL** and the value passes basic sanity validation.
+  `priceVerified`/`sizeVerified`/`availabilityVerified` are only ever
+  `true` when a field survived that check; otherwise the field stays
+  `null`/empty and its flag stays `false` - the styling page renders no
+  price/size/availability chip at all in that case (never a repeated
+  generic "unverified" badge), shows a department/audience chip only when
+  one is actually known, and always shows a single top-level notice
+  ("Confirm current product details, sizes, prices, and availability on
+  Nordstrom.") once per card rather than repeating it per product. A
+  failed enrichment attempt never discards the underlying candidate, and
+  the number of enrichment calls per search is bounded
+  (`stylecast.retail-search.enrichment-max-candidates`).
+- Automated tests never call the real OpenAI API or nordstrom.com - a fake
+  `RetailProductSearchProvider`/`ProductDetailEnricher` bean, or hand-built
+  JSON fixtures shaped like the OpenAI Responses API, are used everywhere
+  (see backend test classes under `com.stylecast.recommendation` whose name
+  starts with `Live`, and `com.stylecast.retail.OpenAiProductDetailEnricherTest`/
+  `CandidateAudienceClassifierTest`).
+
+### Outfit recommendations (local catalog)
+
+`com.stylecast.recommendation` also deterministically assembles up to
+three complete outfits for an event from **the local product catalog
+only**, entirely independently of the live flow above. It never calls the
+live Nordstrom search provider, OpenAI, or any other LLM - every product,
+price, and variant it returns comes directly from the catalog seeded into
+PostgreSQL, and **all catalog products are fictional demo data**, not real
+Nordstrom (or any other retailer's) inventory. This engine remains fully
+functional at the endpoints below, but is no longer wired to the styling
+page's "Generate Looks" button (see "Live outfit recommendations" above).
 
 **Required prerequisites.** Generating recommendations for an event
 requires the event to already have saved styling preferences
@@ -275,9 +375,9 @@ returns HTTP 409 with a clear message instead of guessing.
   both endpoints return HTTP 200 with `hasResults: false` and a
   human-readable `noResultReason` - never a 4xx/5xx error and never a
   fabricated outfit.
-- The event styling page's "Generate Looks" button and recommendation
-  summary cards (showing item names/categories/sizes/colors/prices, total
-  price, and occasion/weather/overall fit scores) are a **temporary**
+- This engine's recommendation summary cards (showing item names/
+  categories/sizes/colors/prices, total price, and occasion/weather/
+  overall fit scores) were previously a **temporary**
   integration for this task, clearly labeled "Demo catalog recommendations"
   - not the final Pinterest-style mood board.
 - Automated tests never call a live retail provider or the OpenAI API -

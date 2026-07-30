@@ -2,6 +2,9 @@ import { EventApiError, type ApiErrorBody } from './eventsApi';
 
 export type PreferredStyle = 'CLASSIC' | 'MODERN' | 'MINIMAL' | 'BOLD' | 'CASUAL' | 'FORMAL';
 
+/** The department a user wants outfit recommendations shopped from. */
+export type ShoppingDepartment = 'MEN' | 'WOMEN' | 'UNISEX' | 'NO_PREFERENCE';
+
 /**
  * An event's saved styling preferences, as returned by the backend.
  */
@@ -15,6 +18,7 @@ export interface EventStylePreferences {
   preferredStyle: PreferredStyle;
   preferredColors: string[];
   colorsToAvoid: string[];
+  shoppingDepartment: ShoppingDepartment;
   createdAt: string;
   updatedAt: string;
 }
@@ -27,6 +31,7 @@ export interface SaveEventStylePreferencesInput {
   preferredStyle: PreferredStyle;
   preferredColors: string[];
   colorsToAvoid: string[];
+  shoppingDepartment: ShoppingDepartment;
 }
 
 async function parseErrorResponse(response: Response): Promise<never> {

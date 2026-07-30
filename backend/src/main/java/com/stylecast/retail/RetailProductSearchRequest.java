@@ -15,13 +15,15 @@ import java.util.List;
  * {@code category}/{@code keywords} is present, and {@code maxPrice} (if any)
  * is strictly positive.
  *
- * @param retailer     the retailer to restrict results to
- * @param category     optional catalog category hint for the search
- * @param keywords     free-text keywords describing the desired product(s);
- *                     never {@code null}, may be empty if {@code category} is present
- * @param maxPrice     optional maximum price in USD
- * @param clothingSize optional clothing size hint
- * @param limit        maximum number of candidates to return, already bounded
+ * @param retailer       the retailer to restrict results to
+ * @param category       optional catalog category hint for the search
+ * @param keywords       free-text keywords describing the desired product(s);
+ *                       never {@code null}, may be empty if {@code category} is present
+ * @param maxPrice       optional maximum price in USD
+ * @param clothingSize   optional clothing size hint
+ * @param targetAudience department/gender constraint; {@link TargetAudience#NO_PREFERENCE}
+ *                       (no constraint) when not explicitly set
+ * @param limit          maximum number of candidates to return, already bounded
  */
 public record RetailProductSearchRequest(
         Retailer retailer,
@@ -29,9 +31,22 @@ public record RetailProductSearchRequest(
         List<String> keywords,
         BigDecimal maxPrice,
         String clothingSize,
+        TargetAudience targetAudience,
         int limit
 ) {
     public RetailProductSearchRequest {
         keywords = keywords == null ? List.of() : List.copyOf(keywords);
+        targetAudience = targetAudience == null ? TargetAudience.NO_PREFERENCE : targetAudience;
+    }
+
+    /**
+     * Backward-compatible constructor defaulting {@code targetAudience} to
+     * {@link TargetAudience#NO_PREFERENCE} (no department constraint), for
+     * callers that predate the candidate-filtering improvements that added it.
+     */
+    public RetailProductSearchRequest(
+            Retailer retailer, ProductCategory category, List<String> keywords, BigDecimal maxPrice,
+            String clothingSize, int limit) {
+        this(retailer, category, keywords, maxPrice, clothingSize, TargetAudience.NO_PREFERENCE, limit);
     }
 }

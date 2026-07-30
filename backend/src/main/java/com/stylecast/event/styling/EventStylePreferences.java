@@ -56,6 +56,10 @@ public class EventStylePreferences {
     @Column(name = "colors_to_avoid", nullable = false, columnDefinition = "text[]")
     private List<String> colorsToAvoid;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "shopping_department", nullable = false, length = 20)
+    private ShoppingDepartment shoppingDepartment;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -85,6 +89,7 @@ public class EventStylePreferences {
             PreferredStyle preferredStyle,
             List<String> preferredColors,
             List<String> colorsToAvoid,
+            ShoppingDepartment shoppingDepartment,
             Instant updatedAt) {
         this.outfitRequest = outfitRequest.trim();
         this.maxBudget = maxBudget;
@@ -93,7 +98,26 @@ public class EventStylePreferences {
         this.preferredStyle = preferredStyle;
         this.preferredColors = normalizeColors(preferredColors);
         this.colorsToAvoid = normalizeColors(colorsToAvoid);
+        this.shoppingDepartment = shoppingDepartment == null ? ShoppingDepartment.NO_PREFERENCE : shoppingDepartment;
         this.updatedAt = updatedAt;
+    }
+
+    /**
+     * Backward-compatible overload defaulting {@code shoppingDepartment} to
+     * {@link ShoppingDepartment#NO_PREFERENCE}, for callers that predate
+     * this field.
+     */
+    public void apply(
+            String outfitRequest,
+            BigDecimal maxBudget,
+            String clothingSize,
+            String shoeSize,
+            PreferredStyle preferredStyle,
+            List<String> preferredColors,
+            List<String> colorsToAvoid,
+            Instant updatedAt) {
+        apply(outfitRequest, maxBudget, clothingSize, shoeSize, preferredStyle, preferredColors, colorsToAvoid,
+                ShoppingDepartment.NO_PREFERENCE, updatedAt);
     }
 
     private static List<String> normalizeColors(List<String> colors) {
@@ -141,6 +165,10 @@ public class EventStylePreferences {
 
     public List<String> getColorsToAvoid() {
         return colorsToAvoid;
+    }
+
+    public ShoppingDepartment getShoppingDepartment() {
+        return shoppingDepartment;
     }
 
     public Instant getCreatedAt() {

@@ -2,6 +2,7 @@ package com.stylecast.event.styling.dto;
 
 import com.stylecast.event.styling.EventStylePreferences;
 import com.stylecast.event.styling.PreferredStyle;
+import com.stylecast.event.styling.ShoppingDepartment;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -21,6 +22,7 @@ public record EventStylePreferencesResponse(
         PreferredStyle preferredStyle,
         List<String> preferredColors,
         List<String> colorsToAvoid,
+        ShoppingDepartment shoppingDepartment,
         Instant createdAt,
         Instant updatedAt
 ) {
@@ -35,6 +37,7 @@ public record EventStylePreferencesResponse(
                 preferences.getPreferredStyle(),
                 preferences.getPreferredColors(),
                 preferences.getColorsToAvoid(),
+                preferences.getShoppingDepartment(),
                 preferences.getCreatedAt(),
                 preferences.getUpdatedAt());
     }
