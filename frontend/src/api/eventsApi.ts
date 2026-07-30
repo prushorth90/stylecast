@@ -112,3 +112,24 @@ export async function createEvent(input: CreateEventInput): Promise<Event> {
 
   return (await response.json()) as Event;
 }
+
+/**
+ * Updates an existing event's details in place (never creates a new
+ * record) - used by Step 1 of the event setup modal's "Continue" action
+ * when the event was already saved (e.g. after clicking "Back" from
+ * Step 2), so repeated edits never create duplicate events.
+ */
+export async function updateEvent(eventId: string, input: CreateEventInput): Promise<Event> {
+  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    return parseErrorResponse(response);
+  }
+
+  return (await response.json()) as Event;
+}
+

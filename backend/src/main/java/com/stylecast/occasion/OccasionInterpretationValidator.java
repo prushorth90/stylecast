@@ -7,6 +7,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Validates a raw JSON object (parsed from {@link OpenAiOccasionClassifier}'s
@@ -39,6 +40,7 @@ public final class OccasionInterpretationValidator {
         List<String> colorsToAvoid = parseStringList(json, "colorsToAvoid");
         List<SpecialRequirement> specialRequirements = parseEnumList(json, "specialRequirements", SpecialRequirement.class);
         List<String> assumptions = parseStringList(json, "assumptions");
+        List<RequestedItem> requestedItems = parseRequestedItems(json);
         BigDecimal confidence = parseConfidence(json);
 
         return new OccasionClassificationResult(
@@ -51,9 +53,63 @@ public final class OccasionInterpretationValidator {
                 colorsToAvoid,
                 specialRequirements,
                 assumptions,
+                requestedItems,
                 confidence,
                 InterpretationSource.AI,
                 modelName);
+    }
+
+    /**
+     * Parses the model's {@code requestedItems} array into validated {@link
+     * RequestedItem}s via {@link RequestedItemNormalizer}. A missing/absent
+     * field yields an empty list (not every event has explicit product
+     * phrases) rather than failing the whole classification, and an item
+     * with a blank/missing {@code originalPhrase} is silently skipped (same
+     * leniency as other blank-entry handling in this class) - but an
+     * unknown {@code genericCategory} value throws, the same strict
+     * convention {@link #parseEnumList} already uses for enum arrays, since
+     * this is model output that must never be persisted when invalid.
+     */
+    private static List<RequestedItem> parseRequestedItems(JsonNode json) {
+        JsonNode node = json.path("requestedItems");
+        if (!node.isArray()) {
+            return List.of();
+        }
+        List<RequestedItem> items = new ArrayList<>();
+        int displayOrder = 0;
+        for (JsonNode itemNode : node) {
+            if (!itemNode.isObject()) {
+                continue;
+            }
+            String originalPhrase = itemNode.path("originalPhrase").asString(null);
+            if (originalPhrase == null || originalPhrase.isBlank()) {
+                continue;
+            }
+            GenericItemCategory genericCategory = parseGenericItemCategory(itemNode.path("genericCategory"));
+            List<String> searchTerms = parseStringList(itemNode, "searchTerms");
+            Boolean required = itemNode.path("required").isBoolean() ? itemNode.path("required").asBoolean() : null;
+            String activityContext = itemNode.path("activityContext").asString(null);
+
+            RequestedItem item = RequestedItemNormalizer.normalize(
+                    originalPhrase, genericCategory, searchTerms, required, activityContext, displayOrder);
+            if (item != null) {
+                items.add(item);
+                displayOrder++;
+            }
+        }
+        return List.copyOf(items);
+    }
+
+    private static GenericItemCategory parseGenericItemCategory(JsonNode node) {
+        String raw = node.isValueNode() ? node.asString(null) : null;
+        if (raw == null || raw.isBlank()) {
+            throw new OccasionClassificationException("Missing required field: requestedItems[].genericCategory");
+        }
+        try {
+            return GenericItemCategory.valueOf(raw.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new OccasionClassificationException("Unknown genericCategory value in requestedItems: " + raw);
+        }
     }
 
     private static int parseFormalityLevel(JsonNode json) {

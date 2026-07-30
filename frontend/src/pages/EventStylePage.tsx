@@ -2,14 +2,14 @@ import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
-import Divider from '@mui/material/Divider';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
+import { useState } from 'react';
 import { Link as RouterLink, useParams } from 'react-router-dom';
+import { EventSetupModal } from '../components/events/EventSetupModal';
 import { EventOccasionCard } from '../components/styling/EventOccasionCard';
 import { EventLiveRecommendationsCard } from '../components/styling/EventLiveRecommendationsCard';
 import { EventWeatherCard } from '../components/styling/EventWeatherCard';
-import { StylePreferencesForm } from '../components/styling/StylePreferencesForm';
 import { useEvent } from '../hooks/useEvents';
 import { useEventOccasionInterpretation } from '../hooks/useEventOccasion';
 import { useLiveEventRecommendations } from '../hooks/useLiveEventRecommendations';
@@ -24,10 +24,11 @@ function formatDateTime(value: string): string {
 }
 
 /**
- * Event styling page. Shows the selected event's details, its saved weather
- * snapshot (with a manual refresh action), its occasion interpretation
- * (with a manual regenerate action), a placeholder for recommended looks
- * (a later task), and a form for the event's styling preferences.
+ * Event styling page. Shows the selected event's summary, its saved
+ * weather snapshot (with a manual refresh action), its occasion
+ * interpretation (with a manual regenerate action), and recommended looks.
+ * Styling preferences are edited via the two-step event setup modal (see
+ * "Edit preferences" below), not a form on this page.
  */
 export function EventStylePage() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -54,6 +55,7 @@ export function EventStylePage() {
     isPending: isRecommendationsPending,
     isError: isRecommendationsError,
   } = useLiveEventRecommendations(eventId);
+  const [isEditPreferencesOpen, setIsEditPreferencesOpen] = useState(false);
 
   if (isEventPending) {
     return (
@@ -83,19 +85,42 @@ export function EventStylePage() {
         Back to Event
       </Button>
 
-      <Stack spacing={1}>
-        <Typography variant="h4" component="h1">
-          Style: {event.title}
-        </Typography>
-        <Typography variant="body1" color="text.secondary">
-          {formatDateTime(event.startTime)} – {formatDateTime(event.endTime)}
-        </Typography>
-        <Typography variant="body1">{event.location}</Typography>
-        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
-          <Chip label={event.setting === 'INDOOR' ? 'Indoor' : 'Outdoor'} />
-          {event.dressCode && <Chip label={event.dressCode} />}
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        sx={{ alignItems: { sm: 'flex-start' }, justifyContent: 'space-between' }}
+      >
+        <Stack spacing={1}>
+          <Typography variant="h4" component="h1">
+            Style: {event.title}
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            {formatDateTime(event.startTime)} – {formatDateTime(event.endTime)}
+          </Typography>
+          <Typography variant="body1">{event.location}</Typography>
+          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
+            <Chip label={event.setting === 'INDOOR' ? 'Indoor' : 'Outdoor'} />
+            {event.dressCode && <Chip label={event.dressCode} />}
+          </Stack>
         </Stack>
+
+        <Button
+          variant="outlined"
+          onClick={() => setIsEditPreferencesOpen(true)}
+          disabled={isPreferencesPending}
+          sx={{ alignSelf: { xs: 'flex-start', sm: 'flex-end' } }}
+        >
+          Edit preferences
+        </Button>
       </Stack>
+
+      {isPreferencesError && (
+        <Alert severity="error" role="alert">
+          {preferencesError instanceof Error
+            ? preferencesError.message
+            : 'Unable to load saved preferences.'}
+        </Alert>
+      )}
 
       {event.id && (
         <EventWeatherCard
@@ -124,32 +149,16 @@ export function EventStylePage() {
         />
       )}
 
-      <Divider />
-
-      <Stack spacing={1}>
-        <Typography variant="h6" component="h2">
-          Styling preferences
-        </Typography>
-
-        {isPreferencesPending && (
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }} role="status">
-            <CircularProgress size={20} />
-            <Typography variant="body1">Loading preferences…</Typography>
-          </Stack>
-        )}
-
-        {isPreferencesError && (
-          <Alert severity="error" role="alert">
-            {preferencesError instanceof Error
-              ? preferencesError.message
-              : 'Unable to load saved preferences.'}
-          </Alert>
-        )}
-
-        {!isPreferencesPending && !isPreferencesError && event.id && (
-          <StylePreferencesForm eventId={event.id} initialPreferences={preferences ?? null} />
-        )}
-      </Stack>
+      {event.id && (
+        <EventSetupModal
+          open={isEditPreferencesOpen}
+          onClose={() => setIsEditPreferencesOpen(false)}
+          eventId={event.id}
+          initialEvent={event}
+          initialPreferences={preferences ?? null}
+          onCompleted={() => setIsEditPreferencesOpen(false)}
+        />
+      )}
     </Stack>
   );
 }

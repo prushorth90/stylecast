@@ -1,5 +1,19 @@
 import { EventApiError, type ApiErrorBody } from './eventsApi';
-import type { ProductCategory } from './occasionApi';
+import type { GenericItemCategory, ProductCategory } from './occasionApi';
+
+export type { GenericItemCategory };
+
+/**
+ * Lightweight summary of one explicit requested item (Task 8.5), used only
+ * for the `foundRequestedItems`/`missingRequestedItems` lists below - use
+ * `originalPhrase` for display, never the raw `genericCategory` enum alone.
+ */
+export interface RequestedItemSummary {
+  id: string;
+  originalPhrase: string;
+  genericCategory: GenericItemCategory;
+  activityContext: string | null;
+}
 
 export type LiveRecommendationStatus = 'ACTIVE' | 'SUPERSEDED' | 'NO_VALID_OUTFIT';
 
@@ -38,7 +52,8 @@ export type CandidateAudience = 'MEN' | 'WOMEN' | 'UNISEX' | 'UNKNOWN';
  */
 export interface LiveOutfitItem {
   id: string;
-  category: ProductCategory;
+  /** `null` when this item came from an explicit requested item instead (Task 8.5) - see `requestedItemPhrase`. */
+  category: ProductCategory | null;
   retailer: 'NORDSTROM';
   title: string | null;
   brand: string | null;
@@ -55,6 +70,9 @@ export interface LiveOutfitItem {
   stockText: string | null;
   availabilityVerified: boolean;
   audience: CandidateAudience;
+  /** The user's own phrase (e.g. "USA soccer jersey") when this item fulfills an explicit requested item; `null` for the legacy category pipeline. Prefer this over `category` for display when present. */
+  requestedItemPhrase: string | null;
+  requestedItemGenericCategory: GenericItemCategory | null;
   sourceCitation: string | null;
   displayOrder: number;
 }
@@ -88,6 +106,9 @@ export interface LiveRecommendationsResponse {
   status: LiveRecommendationCompleteness;
   foundCategories: ProductCategory[];
   missingCategories: ProductCategory[];
+  /** Populated instead of foundCategories/missingCategories whenever explicit requested items exist (Task 8.5) - the two pairs are mutually exclusive per generation. */
+  foundRequestedItems: RequestedItemSummary[];
+  missingRequestedItems: RequestedItemSummary[];
   message: string | null;
   recommendations: LiveOutfitRecommendation[];
 }
@@ -159,4 +180,21 @@ export async function retryMissingLiveEventRecommendations(eventId: string): Pro
   }
 
   return (await response.json()) as LiveRecommendationsResponse;
+}
+
+/**
+ * Marks the event's current live recommendations as stale, without
+ * calling the live search provider - used by the event setup modal after
+ * saving preferences that changed in an interpretation-relevant way. Never
+ * triggers a live Nordstrom search.
+ */
+export async function invalidateStaleLiveEventRecommendations(eventId: string): Promise<void> {
+  const response = await fetch(
+    `/api/events/${encodeURIComponent(eventId)}/recommendations/live/invalidate-stale`,
+    { method: 'POST' },
+  );
+
+  if (!response.ok) {
+    return parseErrorResponse(response);
+  }
 }

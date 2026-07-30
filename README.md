@@ -74,6 +74,13 @@ Implemented so far:
   category, and assembles up to three outfits from the real `nordstrom.com`
   candidates found - never from the local catalog. See "Live outfit
   recommendations" below.
+- Explicit requested-item extraction (`com.stylecast.occasion`, Task 8.5):
+  preserves specific product phrases a user names in their outfit request
+  (e.g. "USA soccer jersey", "swim goggles", "hiking boots") instead of
+  collapsing them into broad categories like `SHIRT`/`TROUSERS`/`SHOES` -
+  these take priority over the occasion interpretation's broad required
+  categories when generating live searches, activity-agnostically (no new
+  enum per sport). See "Explicit requested items" below.
 
 ### Live retail product search (development)
 
@@ -250,6 +257,49 @@ or invents product names, URLs, prices, or inventory.**
   rule-based classifier directly (see backend test classes under
   `com.stylecast.occasion`).
 
+### Explicit requested items
+
+Occasion interpretation also extracts **explicit product phrases** the
+user names in their saved outfit request (e.g. *"I want a USA soccer
+jersey with shorts and football boots"*), preserving each phrase exactly
+as written instead of collapsing it into a broad catalog category like
+`SHIRT`/`TROUSERS`/`SHOES`. Without this, a soccer jersey request could be
+(mis)interpreted as a dress shirt, football boots as loafers, or swim
+goggles as sunglasses - this feature exists specifically to prevent that.
+
+- Each requested item is a small structured record: `originalPhrase` (the
+  user's own words, never rewritten), a broad `genericCategory`,
+  `searchTerms` (normalized keyword variants used to drive live search),
+  `required`, and an optional free-text `activityContext` (e.g. "soccer",
+  "swimming", "hiking").
+- **`genericCategory` is intentionally broad and activity-agnostic:**
+  `TOP`, `BOTTOM`, `ONE_PIECE`, `FOOTWEAR`, `OUTERWEAR`, `ACCESSORY`,
+  `EQUIPMENT`, `OTHER`. There is no per-sport or per-garment category
+  (no `JERSEY`, no `CLEATS`, no `GOGGLES`) - a new activity is supported
+  purely through free-text `originalPhrase`/`searchTerms`/`activityContext`,
+  never by adding a new enum value.
+- **Explicit items always take priority** over the occasion
+  interpretation's broad `requiredCategories` when generating live
+  searches - see "Live outfit recommendations" below.
+- A requested item that Nordstrom search cannot find stays **missing** -
+  it is never silently swapped for an unrelated product that happens to
+  share the same broad category (e.g. an unavailable pair of football
+  boots is never replaced with loafers just because both are `FOOTWEAR`).
+- Both the AI classifier (validated, strict JSON schema) and the
+  deterministic rule-based fallback extract requested items - an event
+  with no explicit product phrases in its outfit request simply has an
+  empty list, and interpretations generated before this feature existed
+  are fully compatible (they load with an empty list, no migration
+  backfill needed).
+
+Examples:
+
+| Activity | Outfit request | Preserved requested items |
+| --- | --- | --- |
+| Soccer | "I want a USA soccer jersey with shorts and football boots." | USA soccer jersey (Top), soccer shorts (Bottom), football boots (Footwear, search also includes "soccer cleats") |
+| Swimming | "I need swim trunks, swimming goggles, and a swim cap." | swim trunks (Bottom), swimming goggles (Equipment), swim cap (Accessory) |
+| Hiking | "I need a hiking shirt, hiking trousers, hiking boots, and a rain shell." | hiking shirt (Top), hiking trousers (Bottom), hiking boots (Footwear), rain shell (Outerwear) |
+
 ### Live outfit recommendations
 
 `com.stylecast.recommendation` also assembles up to three outfits for an
@@ -262,35 +312,49 @@ saved styling preferences, an occasion interpretation, and (optionally) the
 latest weather snapshot. Calling generate before preferences or an
 interpretation exist returns HTTP 409.
 
-- `POST /api/events/{eventId}/recommendations/live/generate` derives the
-  event's required garment categories (from the occasion interpretation,
-  always including shoes) and searches **each one independently** - a
-  targeted Nordstrom search per category, automatically built (keywords,
-  deterministic per-category synonyms - e.g. `TROUSERS` also searches
-  "dress pants"/"pants"/"chinos" - size hint, and an even budget split
-  across categories; **the user never constructs a search themselves**).
-  A search failure for one category never discards candidates already
-  found for another. Up to three outfits are assembled from whichever
-  categories found candidates and persisted as a new, versioned
-  "generation", the same versioning scheme the local-catalog engine uses.
+- `POST /api/events/{eventId}/recommendations/live/generate`: **when the
+  event's occasion interpretation has explicit requested items (see
+  "Explicit requested items" above), those take priority** - one targeted
+  Nordstrom search per requested item (using its own `originalPhrase` and
+  `searchTerms`, never a generic category name), independently. Only when
+  there are **no** explicit requested items does generation fall back to
+  deriving the event's required garment categories (from the occasion
+  interpretation, always including shoes) and searching **each one
+  independently** - a targeted Nordstrom search per category, automatically
+  built (keywords, deterministic per-category synonyms - e.g. `TROUSERS`
+  also searches "dress pants"/"pants"/"chinos" - size hint, and an even
+  budget split across items/categories; **the user never constructs a
+  search themselves**). A search failure for one item/category never
+  discards candidates already found for another. Up to three outfits are
+  assembled from whichever items/categories found candidates and
+  persisted as a new, versioned "generation", the same versioning scheme
+  the local-catalog engine uses.
 - `POST /api/events/{eventId}/recommendations/live/retry-missing`
-  re-searches **only** the categories the latest generation was missing,
-  reusing the candidates already found for every other category (no
-  repeated search calls for categories that already succeeded) - bounds
-  the added API cost of a retry to just the gap. A no-op (no search calls
-  at all) when nothing was missing.
+  re-searches **only** the items/categories the latest generation was
+  missing, reusing the candidates already found for every other one (no
+  repeated search calls for items/categories that already succeeded) -
+  bounds the added API cost of a retry to just the gap. A no-op (no search
+  calls at all) when nothing was missing.
 - `GET /api/events/{eventId}/recommendations/live` returns the event's
   current (latest generation) live recommendations. **It never triggers a
   live search on its own** - only `generate`/`retry-missing` do.
+- **When explicit requested items exist, the response includes
+  `foundRequestedItems`/`missingRequestedItems`** (each item's
+  `originalPhrase`, `genericCategory`, and `activityContext`) instead of
+  `foundCategories`/`missingCategories`. The event styling page shows these
+  under "Found" (with a working Nordstrom link) and "Missing" (a clear "No
+  matching Nordstrom product found" message) - a missing explicit item is
+  never silently dropped or replaced with an unrelated product.
 - **Every generation reports a `status`:**
-  - `COMPLETE` - every required category found candidates.
-  - `PARTIAL` - some categories found candidates and some did not; valid
-    Nordstrom candidates (with working product links) are still returned
-    for the categories that succeeded, alongside `foundCategories`/
-    `missingCategories` and a clear message (e.g. *"We found items for
-    Shirt and Shoes, but no matching Trousers."*) - **never presented as a
-    complete outfit**. The styling page offers a "Retry Missing Items"
-    action for this case.
+  - `COMPLETE` - every required category (or every explicit requested
+    item) found candidates.
+  - `PARTIAL` - some found candidates and some did not; valid Nordstrom
+    candidates (with working product links) are still returned for the
+    ones that succeeded, alongside `foundCategories`/`missingCategories`
+    (or `foundRequestedItems`/`missingRequestedItems`) and a clear message
+    (e.g. *"We found items for Shirt and Shoes, but no matching
+    Trousers."*) - **never presented as a complete outfit**. The styling
+    page offers a "Retry Missing Items" action for this case.
   - `NO_RESULTS` - every required category was searched successfully but
     none found anything; a normal, non-error outcome, never a fabricated
     outfit.

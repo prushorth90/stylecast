@@ -50,6 +50,7 @@ public class RetailProductSearchService {
                 request.keywords(),
                 request.maxPrice(),
                 request.clothingSize(),
+                request.targetAudience(),
                 resolvedLimit);
     }
 

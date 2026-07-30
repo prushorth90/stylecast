@@ -111,4 +111,17 @@ class RetailProductSearchServiceTest {
                 .isInstanceOf(ProductSearchProviderException.class)
                 .hasMessage("boom");
     }
+
+    @Test
+    void search_preservesTargetAudienceThroughValidation() {
+        RetailProductSearchRequest request = new RetailProductSearchRequest(
+                Retailer.NORDSTROM, ProductCategory.SUIT, List.of(), null, null, TargetAudience.MEN, 5);
+        when(provider.search(any())).thenReturn(new RetailProductSearchResult(List.of()));
+
+        service().search(request);
+
+        ArgumentCaptor<RetailProductSearchRequest> captor = ArgumentCaptor.forClass(RetailProductSearchRequest.class);
+        verify(provider).search(captor.capture());
+        assertThat(captor.getValue().targetAudience()).isEqualTo(TargetAudience.MEN);
+    }
 }

@@ -1,6 +1,7 @@
 package com.stylecast.recommendation;
 
 import com.stylecast.catalog.ProductCategory;
+import com.stylecast.occasion.GenericItemCategory;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -81,6 +82,12 @@ public class LiveOutfitRecommendation {
     @Column(name = "missing_categories", length = 300)
     private String missingCategories;
 
+    @Column(name = "found_requested_items", columnDefinition = "text")
+    private String foundRequestedItems;
+
+    @Column(name = "missing_requested_items", columnDefinition = "text")
+    private String missingRequestedItems;
+
     @Column(name = "rank_position")
     private Integer rankPosition;
 
@@ -89,6 +96,20 @@ public class LiveOutfitRecommendation {
 
     @Column(length = 500)
     private String explanation;
+
+    /**
+     * {@code true} once the event's saved styling preferences changed in an
+     * interpretation-relevant way (outfitRequest/preferredStyle/
+     * preferredColors/colorsToAvoid) AFTER this row was generated - see
+     * {@link LiveRecommendationService#invalidateStaleRecommendations}.
+     * Never cleared automatically; only a fresh {@code generate}/{@code
+     * retry-missing} call (which creates a brand-new generation) moves past
+     * it. Marking a row stale never removes it and never triggers a live
+     * search - it is a pure metadata flag for the frontend to show an
+     * "outdated, regenerate for the latest looks" notice.
+     */
+    @Column(nullable = false)
+    private boolean stale;
 
     @Column(name = "generated_at", nullable = false)
     private Instant generatedAt;
@@ -117,11 +138,19 @@ public class LiveOutfitRecommendation {
         this.updatedAt = now;
     }
 
-    /** Creates an {@link RecommendationStatus#ACTIVE} row for a real assembled (complete or partial) live outfit. */
+    /**
+     * Creates an {@link RecommendationStatus#ACTIVE} row for a real assembled
+     * (complete or partial) live outfit. Exactly one of {@code
+     * foundCategories}/{@code missingCategories} or {@code
+     * foundRequestedItems}/{@code missingRequestedItems} is non-empty,
+     * depending on which pipeline produced this generation - the other pair
+     * stays empty.
+     */
     public static LiveOutfitRecommendation active(
             UUID eventId, int generation, int rankPosition, String name, String explanation,
             LiveRecommendationCompleteness completeness, List<ProductCategory> foundCategories,
-            List<ProductCategory> missingCategories, String message, Instant now) {
+            List<ProductCategory> missingCategories, List<RequestedItemSummary> foundRequestedItems,
+            List<RequestedItemSummary> missingRequestedItems, String message, Instant now) {
         LiveOutfitRecommendation recommendation = new LiveOutfitRecommendation(UUID.randomUUID(), eventId, generation, now);
         recommendation.status = RecommendationStatus.ACTIVE;
         recommendation.rankPosition = rankPosition;
@@ -130,6 +159,8 @@ public class LiveOutfitRecommendation {
         recommendation.completeness = completeness;
         recommendation.foundCategories = joinCategories(foundCategories);
         recommendation.missingCategories = joinCategories(missingCategories);
+        recommendation.foundRequestedItems = joinRequestedItems(foundRequestedItems);
+        recommendation.missingRequestedItems = joinRequestedItems(missingRequestedItems);
         recommendation.message = message;
         recommendation.generatedAt = now;
         return recommendation;
@@ -143,7 +174,9 @@ public class LiveOutfitRecommendation {
      */
     public static LiveOutfitRecommendation withoutOutfit(
             UUID eventId, int generation, LiveRecommendationCompleteness completeness,
-            List<ProductCategory> foundCategories, List<ProductCategory> missingCategories, String message, Instant now) {
+            List<ProductCategory> foundCategories, List<ProductCategory> missingCategories,
+            List<RequestedItemSummary> foundRequestedItems, List<RequestedItemSummary> missingRequestedItems,
+            String message, Instant now) {
         LiveOutfitRecommendation recommendation = new LiveOutfitRecommendation(UUID.randomUUID(), eventId, generation, now);
         recommendation.status = RecommendationStatus.NO_VALID_OUTFIT;
         recommendation.name = completeness == LiveRecommendationCompleteness.PROVIDER_UNAVAILABLE
@@ -152,6 +185,8 @@ public class LiveOutfitRecommendation {
         recommendation.completeness = completeness;
         recommendation.foundCategories = joinCategories(foundCategories);
         recommendation.missingCategories = joinCategories(missingCategories);
+        recommendation.foundRequestedItems = joinRequestedItems(foundRequestedItems);
+        recommendation.missingRequestedItems = joinRequestedItems(missingRequestedItems);
         recommendation.message = message;
         recommendation.generatedAt = now;
         return recommendation;
@@ -165,6 +200,15 @@ public class LiveOutfitRecommendation {
     public void supersede(Instant now) {
         this.status = RecommendationStatus.SUPERSEDED;
         this.updatedAt = now;
+    }
+
+    public void markStale(Instant now) {
+        this.stale = true;
+        this.updatedAt = now;
+    }
+
+    public boolean isStale() {
+        return stale;
     }
 
     public UUID getId() {
@@ -203,6 +247,16 @@ public class LiveOutfitRecommendation {
         return parseCategories(missingCategories);
     }
 
+    /** Never {@code null}; empty when this generation used the category-template pipeline instead. */
+    public List<RequestedItemSummary> getFoundRequestedItems() {
+        return parseRequestedItems(foundRequestedItems);
+    }
+
+    /** Never {@code null}; empty when this generation used the category-template pipeline instead. */
+    public List<RequestedItemSummary> getMissingRequestedItems() {
+        return parseRequestedItems(missingRequestedItems);
+    }
+
     public Integer getRankPosition() {
         return rankPosition;
     }
@@ -234,6 +288,45 @@ public class LiveOutfitRecommendation {
             return List.of();
         }
         return Arrays.stream(raw.split(",")).map(ProductCategory::valueOf).toList();
+    }
+
+    // Field separator / record separator (ASCII 0x1F/0x1E) - control characters that will
+    // never appear in ordinary user-entered phrases, so no escaping is needed. Same
+    // "accept the theoretical risk for a small denormalized display column" trade-off
+    // already made by joinCategories' comma-joining above.
+    private static final String ITEM_FIELD_SEPARATOR = "\u001F";
+    private static final String ITEM_RECORD_SEPARATOR = "\u001E";
+
+    private static String joinRequestedItems(List<RequestedItemSummary> items) {
+        if (items == null || items.isEmpty()) {
+            return null;
+        }
+        return items.stream()
+                .map(item -> String.join(ITEM_FIELD_SEPARATOR,
+                        item.id().toString(),
+                        item.originalPhrase(),
+                        item.genericCategory().name(),
+                        item.activityContext() == null ? "" : item.activityContext()))
+                .collect(Collectors.joining(ITEM_RECORD_SEPARATOR));
+    }
+
+    private static List<RequestedItemSummary> parseRequestedItems(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        List<RequestedItemSummary> items = new ArrayList<>();
+        for (String record : raw.split(ITEM_RECORD_SEPARATOR)) {
+            String[] fields = record.split(ITEM_FIELD_SEPARATOR, -1);
+            if (fields.length < 4) {
+                continue;
+            }
+            UUID itemId = UUID.fromString(fields[0]);
+            String originalPhrase = fields[1];
+            GenericItemCategory genericCategory = GenericItemCategory.valueOf(fields[2]);
+            String activityContext = fields[3].isEmpty() ? null : fields[3];
+            items.add(new RequestedItemSummary(itemId, originalPhrase, genericCategory, activityContext));
+        }
+        return List.copyOf(items);
     }
 
     public Instant getUpdatedAt() {

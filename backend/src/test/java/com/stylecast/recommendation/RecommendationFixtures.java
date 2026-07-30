@@ -99,7 +99,20 @@ final class RecommendationFixtures {
         OccasionInterpretation interpretation = new OccasionInterpretation(UUID.randomUUID(), eventId, Instant.now());
         interpretation.apply(new OccasionClassificationResult(
                 occasion, InterpretedDressCode.FORMAL, formalityLevel, requiredCategories, optionalCategories,
-                List.of(), colorsToAvoid, List.of(SpecialRequirement.NOT_OVERLY_FORMAL), List.of(),
+                List.of(), colorsToAvoid, List.of(SpecialRequirement.NOT_OVERLY_FORMAL), List.of(), List.of(),
+                BigDecimal.valueOf(0.9), InterpretationSource.RULE_BASED_FALLBACK, null), Instant.now());
+        return interpretation;
+    }
+
+    /** Overload allowing tests to control explicit {@code requestedItems} (Task 8.5). */
+    static OccasionInterpretation interpretation(
+            UUID eventId, OccasionType occasion, int formalityLevel, List<ProductCategory> requiredCategories,
+            List<ProductCategory> optionalCategories, List<String> colorsToAvoid,
+            List<com.stylecast.occasion.RequestedItem> requestedItems) {
+        OccasionInterpretation interpretation = new OccasionInterpretation(UUID.randomUUID(), eventId, Instant.now());
+        interpretation.apply(new OccasionClassificationResult(
+                occasion, InterpretedDressCode.FORMAL, formalityLevel, requiredCategories, optionalCategories,
+                List.of(), colorsToAvoid, List.of(SpecialRequirement.NOT_OVERLY_FORMAL), List.of(), requestedItems,
                 BigDecimal.valueOf(0.9), InterpretationSource.RULE_BASED_FALLBACK, null), Instant.now());
         return interpretation;
     }

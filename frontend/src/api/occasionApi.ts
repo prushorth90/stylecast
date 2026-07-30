@@ -50,6 +50,39 @@ export type SpecialRequirement =
 export type InterpretationSource = 'AI' | 'RULE_BASED_FALLBACK';
 
 /**
+ * Broad, activity-agnostic category for an explicitly requested product
+ * phrase (Task 8.5) - deliberately separate from `ProductCategory` above,
+ * and deliberately NOT one value per sport/garment. Arbitrary activities
+ * (soccer, swimming, hiking, ...) are supported via free-text
+ * `originalPhrase`/`searchTerms`/`activityContext` instead of adding new
+ * enum values here.
+ */
+export type GenericItemCategory =
+  | 'TOP'
+  | 'BOTTOM'
+  | 'ONE_PIECE'
+  | 'FOOTWEAR'
+  | 'OUTERWEAR'
+  | 'ACCESSORY'
+  | 'EQUIPMENT'
+  | 'OTHER';
+
+/**
+ * One explicit product phrase extracted from the user's saved outfit
+ * request (e.g. "USA soccer jersey"), preserved verbatim rather than
+ * collapsed into a broad category. See `GenericItemCategory` above.
+ */
+export interface RequestedItem {
+  id: string;
+  originalPhrase: string;
+  genericCategory: GenericItemCategory;
+  searchTerms: string[];
+  required: boolean;
+  activityContext: string | null;
+  displayOrder: number;
+}
+
+/**
  * An event's occasion interpretation, as returned by the backend. This task
  * only classifies the occasion - it never contains product names, URLs,
  * prices, or inventory.
@@ -66,6 +99,8 @@ export interface OccasionInterpretation {
   colorsToAvoid: string[];
   specialRequirements: SpecialRequirement[];
   assumptions: string[];
+  /** Never `null`; empty for events with no explicit product phrases, or for interpretations generated before Task 8.5 existed. */
+  requestedItems: RequestedItem[];
   confidence: number;
   source: InterpretationSource;
   generatedAt: string;

@@ -125,6 +125,22 @@ public class OpenAiOccasionClassifier implements OccasionClassifier {
                 .append("the title or description. Do not invent product names, URLs, prices, or inventory - ")
                 .append("this response only classifies the occasion, it does not select any products.");
 
+        prompt.append(" Additionally, extract requestedItems: identify every specific product phrase the user ")
+                .append("explicitly named in the saved outfit request (e.g. \"USA soccer jersey\", \"swim goggles\", ")
+                .append("\"hiking boots\"), one entry per distinct item. Preserve each phrase exactly as the user ")
+                .append("wrote it in originalPhrase - never rewrite it into a generic garment name and never force it ")
+                .append("into a narrower category if that would lose meaning (a soccer jersey is not a dress shirt, ")
+                .append("football boots are not loafers, swim goggles are not sunglasses, a swim cap is not a baseball ")
+                .append("cap, hiking boots are not dress shoes). Classify genericCategory using only the broad, ")
+                .append("activity-agnostic values in the schema (TOP, BOTTOM, ONE_PIECE, FOOTWEAR, OUTERWEAR, ")
+                .append("ACCESSORY, EQUIPMENT, OTHER) - never invent a new category value for a specific sport or ")
+                .append("garment. Provide a few short searchTerms variants (synonyms/alternate names) to help find ")
+                .append("this exact item while shopping, without changing what the item is. Set activityContext to ")
+                .append("the relevant activity/sport in the user's own words when evident (e.g. \"soccer\", ")
+                .append("\"swimming\", \"hiking\"), or null when none is evident. Do not invent a named brand unless ")
+                .append("the user explicitly requested one. If the outfit request names no specific products, return ")
+                .append("an empty requestedItems array - never invent items that were not mentioned.");
+
         return prompt.toString();
     }
 
@@ -148,6 +164,7 @@ public class OpenAiOccasionClassifier implements OccasionClassifier {
         properties.set("colorsToAvoid", stringArraySchema());
         properties.set("specialRequirements", enumArraySchema(SpecialRequirement.values()));
         properties.set("assumptions", stringArraySchema());
+        properties.set("requestedItems", requestedItemsSchema());
 
         ObjectNode confidence = properties.putObject("confidence");
         confidence.put("type", "number");
@@ -164,9 +181,43 @@ public class OpenAiOccasionClassifier implements OccasionClassifier {
         required.add("colorsToAvoid");
         required.add("specialRequirements");
         required.add("assumptions");
+        required.add("requestedItems");
         required.add("confidence");
 
         return schema;
+    }
+
+    /**
+     * Schema for the {@code requestedItems} array: one object per explicit
+     * product phrase, deliberately keeping {@code originalPhrase} as free
+     * text (never an enum) so specificity is never lost, while {@code
+     * genericCategory} stays restricted to the small, fixed, activity-agnostic
+     * set in {@link GenericItemCategory} - no per-sport/per-garment values.
+     */
+    private ObjectNode requestedItemsSchema() {
+        ObjectNode arraySchema = objectMapper.createObjectNode();
+        arraySchema.put("type", "array");
+
+        ObjectNode itemSchema = arraySchema.putObject("items");
+        itemSchema.put("type", "object");
+        itemSchema.put("additionalProperties", false);
+
+        ObjectNode itemProperties = itemSchema.putObject("properties");
+        itemProperties.putObject("originalPhrase").put("type", "string");
+        itemProperties.set("genericCategory", enumSchema(GenericItemCategory.values()));
+        itemProperties.set("searchTerms", stringArraySchema());
+        itemProperties.putObject("required").put("type", "boolean");
+        ObjectNode activityContext = itemProperties.putObject("activityContext");
+        activityContext.putArray("type").add("string").add("null");
+
+        ArrayNode itemRequired = itemSchema.putArray("required");
+        itemRequired.add("originalPhrase");
+        itemRequired.add("genericCategory");
+        itemRequired.add("searchTerms");
+        itemRequired.add("required");
+        itemRequired.add("activityContext");
+
+        return arraySchema;
     }
 
     private ObjectNode enumSchema(Enum<?>[] values) {

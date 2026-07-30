@@ -3,16 +3,19 @@ import Button from '@mui/material/Button';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import { useState } from 'react';
-import { CreateEventDialog } from '../components/events/CreateEventDialog';
+import { useNavigate } from 'react-router-dom';
+import { EventSetupModal } from '../components/events/EventSetupModal';
 import { EventList } from '../components/events/EventList';
 
 /**
  * Events page: shows upcoming events chronologically and lets the user
- * manually create a new event. Calendar integration is a later, separately
+ * create a new event via the two-step event setup modal (event details,
+ * then styling preferences). Calendar integration is a later, separately
  * scoped issue.
  */
 export function EventsPage() {
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isSetupModalOpen, setIsSetupModalOpen] = useState(false);
+  const navigate = useNavigate();
 
   return (
     <>
@@ -27,7 +30,7 @@ export function EventsPage() {
         <Button
           variant="contained"
           startIcon={<AddIcon />}
-          onClick={() => setIsCreateDialogOpen(true)}
+          onClick={() => setIsSetupModalOpen(true)}
         >
           Create Event
         </Button>
@@ -35,7 +38,12 @@ export function EventsPage() {
 
       <EventList />
 
-      <CreateEventDialog open={isCreateDialogOpen} onClose={() => setIsCreateDialogOpen(false)} />
+      <EventSetupModal
+        open={isSetupModalOpen}
+        onClose={() => setIsSetupModalOpen(false)}
+        onCompleted={(eventId) => navigate(`/events/${eventId}/style`)}
+      />
     </>
   );
 }
+

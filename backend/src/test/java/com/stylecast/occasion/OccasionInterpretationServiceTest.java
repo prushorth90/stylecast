@@ -71,6 +71,7 @@ class OccasionInterpretationServiceTest {
                 List.of(),
                 List.of(SpecialRequirement.OUTDOOR_SUITABLE),
                 List.of("Outdoor garden wedding implies cocktail-adjacent formality."),
+                List.of(),
                 new BigDecimal("0.88"),
                 InterpretationSource.AI,
                 "gpt-4.1");
@@ -87,6 +88,7 @@ class OccasionInterpretationServiceTest {
                 List.of(),
                 List.of(SpecialRequirement.OUTDOOR_SUITABLE),
                 List.of("Classified using keyword matching against event text; no live weather data was used."),
+                List.of(),
                 new BigDecimal("0.45"),
                 InterpretationSource.RULE_BASED_FALLBACK,
                 null);

@@ -1,6 +1,7 @@
 package com.stylecast.recommendation.dto;
 
 import com.stylecast.catalog.ProductCategory;
+import com.stylecast.occasion.GenericItemCategory;
 import com.stylecast.retail.CandidateAudience;
 import com.stylecast.retail.Retailer;
 
@@ -20,6 +21,12 @@ import java.util.UUID;
  * {@link CandidateAudience#UNKNOWN} whenever no trustworthy department
  * signal was found - the frontend should simply omit any department/audience
  * display in that case, never guess one.
+ *
+ * <p>Exactly one of {@code category} (legacy required-categories pipeline)
+ * or {@code requestedItemPhrase}/{@code requestedItemGenericCategory}
+ * (explicit-item pipeline, Task 8.5) is non-null - the frontend should
+ * prefer {@code requestedItemPhrase} as the item's display label whenever
+ * it is present, falling back to a formatted {@code category} otherwise.
  */
 public record LiveOutfitItemResponse(
         UUID id,
@@ -40,6 +47,8 @@ public record LiveOutfitItemResponse(
         String stockText,
         boolean availabilityVerified,
         CandidateAudience audience,
+        String requestedItemPhrase,
+        GenericItemCategory requestedItemGenericCategory,
         String sourceCitation,
         int displayOrder) {
 }
