@@ -15,6 +15,7 @@ import type {
   EventStylePreferences,
   PreferredStyle,
   SaveEventStylePreferencesInput,
+  ShoppingDepartment,
 } from '../../api/stylePreferencesApi';
 import { useSaveEventStylePreferences } from '../../hooks/useStylePreferences';
 
@@ -30,6 +31,12 @@ const PREFERRED_STYLE_OPTIONS: Array<{ value: PreferredStyle; label: string }> =
   { value: 'CASUAL', label: 'Casual' },
   { value: 'FORMAL', label: 'Formal' },
 ];
+const SHOPPING_DEPARTMENT_OPTIONS: Array<{ value: ShoppingDepartment; label: string }> = [
+  { value: 'MEN', label: "Men's" },
+  { value: 'WOMEN', label: "Women's" },
+  { value: 'UNISEX', label: 'Gender-neutral / Unisex' },
+  { value: 'NO_PREFERENCE', label: 'No preference' },
+];
 
 interface StylePreferencesFormProps {
   eventId: string;
@@ -44,6 +51,7 @@ interface FormState {
   preferredStyle: PreferredStyle | '';
   preferredColors: string;
   colorsToAvoid: string;
+  shoppingDepartment: ShoppingDepartment | '';
 }
 
 type FieldErrors = Partial<Record<keyof FormState, string>>;
@@ -58,6 +66,7 @@ function toFormState(preferences: EventStylePreferences | null): FormState {
       preferredStyle: '',
       preferredColors: '',
       colorsToAvoid: '',
+      shoppingDepartment: 'NO_PREFERENCE',
     };
   }
 
@@ -69,6 +78,7 @@ function toFormState(preferences: EventStylePreferences | null): FormState {
     preferredStyle: preferences.preferredStyle,
     preferredColors: preferences.preferredColors.join(', '),
     colorsToAvoid: preferences.colorsToAvoid.join(', '),
+    shoppingDepartment: preferences.shoppingDepartment,
   };
 }
 
@@ -120,6 +130,9 @@ export function StylePreferencesForm({ eventId, initialPreferences }: StylePrefe
     if (!form.preferredStyle) {
       errors.preferredStyle = 'Preferred style is required.';
     }
+    if (!form.shoppingDepartment) {
+      errors.shoppingDepartment = 'Shop from is required.';
+    }
 
     return errors;
   }
@@ -143,6 +156,7 @@ export function StylePreferencesForm({ eventId, initialPreferences }: StylePrefe
       preferredStyle: form.preferredStyle as PreferredStyle,
       preferredColors: parseCommaSeparated(form.preferredColors),
       colorsToAvoid: parseCommaSeparated(form.colorsToAvoid),
+      shoppingDepartment: form.shoppingDepartment as ShoppingDepartment,
     };
 
     saveMutation.mutate(input, {
@@ -255,6 +269,25 @@ export function StylePreferencesForm({ eventId, initialPreferences }: StylePrefe
             ))}
           </Select>
           {fieldErrors.preferredStyle && <FormHelperText>{fieldErrors.preferredStyle}</FormHelperText>}
+        </FormControl>
+
+        <FormControl fullWidth required error={Boolean(fieldErrors.shoppingDepartment)}>
+          <InputLabel id="shopping-department-label">Shop from</InputLabel>
+          <Select
+            labelId="shopping-department-label"
+            label="Shop from"
+            value={form.shoppingDepartment}
+            onChange={(event: SelectChangeEvent) =>
+              updateField('shoppingDepartment', event.target.value as ShoppingDepartment)
+            }
+          >
+            {SHOPPING_DEPARTMENT_OPTIONS.map((option) => (
+              <MenuItem key={option.value} value={option.value}>
+                {option.label}
+              </MenuItem>
+            ))}
+          </Select>
+          {fieldErrors.shoppingDepartment && <FormHelperText>{fieldErrors.shoppingDepartment}</FormHelperText>}
         </FormControl>
 
         <TextField

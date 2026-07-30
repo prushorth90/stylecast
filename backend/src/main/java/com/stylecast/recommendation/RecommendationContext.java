@@ -4,6 +4,7 @@ import com.stylecast.catalog.ProductCategory;
 import com.stylecast.event.Event;
 import com.stylecast.event.styling.EventStylePreferences;
 import com.stylecast.event.styling.PreferredStyle;
+import com.stylecast.event.styling.ShoppingDepartment;
 import com.stylecast.occasion.OccasionInterpretation;
 import com.stylecast.occasion.OccasionType;
 import com.stylecast.weather.EventWeatherSnapshot;
@@ -49,6 +50,10 @@ public record RecommendationContext(
 
     public PreferredStyle preferredStyle() {
         return preferences.getPreferredStyle();
+    }
+
+    public ShoppingDepartment shoppingDepartment() {
+        return preferences.getShoppingDepartment();
     }
 
     public int formalityLevel() {

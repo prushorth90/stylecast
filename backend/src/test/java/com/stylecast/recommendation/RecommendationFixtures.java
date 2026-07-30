@@ -11,6 +11,7 @@ import com.stylecast.event.Event;
 import com.stylecast.event.EventSetting;
 import com.stylecast.event.styling.EventStylePreferences;
 import com.stylecast.event.styling.PreferredStyle;
+import com.stylecast.event.styling.ShoppingDepartment;
 import com.stylecast.occasion.InterpretationSource;
 import com.stylecast.occasion.InterpretedDressCode;
 import com.stylecast.occasion.OccasionClassificationResult;
@@ -79,6 +80,16 @@ final class RecommendationFixtures {
             List<String> preferredColors, List<String> colorsToAvoid) {
         EventStylePreferences preferences = new EventStylePreferences(UUID.randomUUID(), eventId, Instant.now());
         preferences.apply("Something stylish", maxBudget, clothingSize, shoeSize, style, preferredColors, colorsToAvoid, Instant.now());
+        return preferences;
+    }
+
+    /** Overload for tests that need explicit control over {@code shoppingDepartment}. */
+    static EventStylePreferences preferences(
+            UUID eventId, BigDecimal maxBudget, String clothingSize, String shoeSize, PreferredStyle style,
+            List<String> preferredColors, List<String> colorsToAvoid, ShoppingDepartment shoppingDepartment) {
+        EventStylePreferences preferences = new EventStylePreferences(UUID.randomUUID(), eventId, Instant.now());
+        preferences.apply("Something stylish", maxBudget, clothingSize, shoeSize, style, preferredColors, colorsToAvoid,
+                shoppingDepartment, Instant.now());
         return preferences;
     }
 

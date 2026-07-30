@@ -1,6 +1,7 @@
 package com.stylecast.event.styling.dto;
 
 import com.stylecast.event.styling.PreferredStyle;
+import com.stylecast.event.styling.ShoppingDepartment;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
@@ -39,6 +40,9 @@ public record UpsertEventStylePreferencesRequest(
 
         List<@Size(max = 50, message = "must be at most 50 characters") String> preferredColors,
 
-        List<@Size(max = 50, message = "must be at most 50 characters") String> colorsToAvoid
+        List<@Size(max = 50, message = "must be at most 50 characters") String> colorsToAvoid,
+
+        @NotNull(message = "must not be null")
+        ShoppingDepartment shoppingDepartment
 ) {
 }

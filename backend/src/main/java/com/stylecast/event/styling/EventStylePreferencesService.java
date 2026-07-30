@@ -51,6 +51,7 @@ public class EventStylePreferencesService {
                 request.preferredStyle(),
                 request.preferredColors(),
                 request.colorsToAvoid(),
+                request.shoppingDepartment(),
                 now);
 
         EventStylePreferences saved = preferencesRepository.save(preferences);

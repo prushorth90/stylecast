@@ -86,6 +86,7 @@ class EventStylePreferencesControllerTest {
         body.put("preferredStyle", "CLASSIC");
         body.put("preferredColors", List.of("navy", "cream"));
         body.put("colorsToAvoid", List.of("bright red"));
+        body.put("shoppingDepartment", "MEN");
         return body;
     }
 
@@ -122,6 +123,7 @@ class EventStylePreferencesControllerTest {
         assertThat(body.preferredStyle()).isEqualTo("CLASSIC");
         assertThat(body.preferredColors()).containsExactly("navy", "cream");
         assertThat(body.colorsToAvoid()).containsExactly("bright red");
+        assertThat(body.shoppingDepartment()).isEqualTo("MEN");
 
         assertThat(preferencesRepository.findByEventId(eventId)).isPresent();
     }
@@ -291,6 +293,23 @@ class EventStylePreferencesControllerTest {
     }
 
     @Test
+    void putPreferences_withMissingShoppingDepartment_returns400() {
+        Map<String, Object> body = new HashMap<>(validRequestBody());
+        body.remove("shoppingDepartment");
+
+        ResponseEntity<ApiError> response = restTemplate.exchange(
+                url("/api/events/" + eventId + "/preferences"),
+                HttpMethod.PUT,
+                jsonRequest(body),
+                ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().fieldErrors())
+                .anyMatch(fieldError -> fieldError.field().equals("shoppingDepartment"));
+    }
+
+    @Test
     void putPreferences_withOutfitRequestExceedingMaxLength_returns400() {
         Map<String, Object> body = new HashMap<>(validRequestBody());
         body.put("outfitRequest", "a".repeat(2001));
@@ -320,6 +339,7 @@ class EventStylePreferencesControllerTest {
             String preferredStyle,
             List<String> preferredColors,
             List<String> colorsToAvoid,
+            String shoppingDepartment,
             String createdAt,
             String updatedAt) {
     }

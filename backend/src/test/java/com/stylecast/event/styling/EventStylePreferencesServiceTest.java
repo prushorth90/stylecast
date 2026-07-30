@@ -3,8 +3,7 @@ package com.stylecast.event.styling;
 import com.stylecast.event.EventNotFoundException;
 import com.stylecast.event.EventRepository;
 import com.stylecast.event.styling.dto.EventStylePreferencesResponse;
-import com.stylecast.event.styling.dto.UpsertEventStylePreferencesRequest;
-import org.junit.jupiter.api.Test;
+import com.stylecast.event.styling.dto.UpsertEventStylePreferencesRequest;import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -42,7 +41,8 @@ class EventStylePreferencesServiceTest {
                 "  10  ",
                 PreferredStyle.CLASSIC,
                 List.of(" navy ", "cream", ""),
-                List.of("bright red"));
+                List.of("bright red"),
+                ShoppingDepartment.MEN);
     }
 
     @Test

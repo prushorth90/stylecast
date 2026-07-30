@@ -7,12 +7,12 @@ import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import { Link as RouterLink, useParams } from 'react-router-dom';
 import { EventOccasionCard } from '../components/styling/EventOccasionCard';
-import { EventRecommendationsCard } from '../components/styling/EventRecommendationsCard';
+import { EventLiveRecommendationsCard } from '../components/styling/EventLiveRecommendationsCard';
 import { EventWeatherCard } from '../components/styling/EventWeatherCard';
 import { StylePreferencesForm } from '../components/styling/StylePreferencesForm';
 import { useEvent } from '../hooks/useEvents';
 import { useEventOccasionInterpretation } from '../hooks/useEventOccasion';
-import { useEventRecommendations } from '../hooks/useEventRecommendations';
+import { useLiveEventRecommendations } from '../hooks/useLiveEventRecommendations';
 import { useEventWeather } from '../hooks/useEventWeather';
 import { useEventStylePreferences } from '../hooks/useStylePreferences';
 
@@ -53,7 +53,7 @@ export function EventStylePage() {
     data: recommendations,
     isPending: isRecommendationsPending,
     isError: isRecommendationsError,
-  } = useEventRecommendations(eventId);
+  } = useLiveEventRecommendations(eventId);
 
   if (isEventPending) {
     return (
@@ -116,7 +116,7 @@ export function EventStylePage() {
       )}
 
       {event.id && (
-        <EventRecommendationsCard
+        <EventLiveRecommendationsCard
           eventId={event.id}
           recommendations={recommendations}
           isLoading={isRecommendationsPending}

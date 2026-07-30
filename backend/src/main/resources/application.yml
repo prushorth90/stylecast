@@ -28,6 +28,10 @@ stylecast:
     connect-timeout-ms: ${RETAIL_SEARCH_CONNECT_TIMEOUT_MS:5000}
     read-timeout-ms: ${RETAIL_SEARCH_READ_TIMEOUT_MS:15000}
     max-result-limit: ${RETAIL_SEARCH_MAX_RESULTS:25}
+    # Bounds how many candidates per category search get an extra
+    # OpenAiProductDetailEnricher call - keeps the added latency/cost of
+    # product-detail enrichment predictable regardless of a request's limit.
+    enrichment-max-candidates: ${RETAIL_SEARCH_ENRICHMENT_MAX_CANDIDATES:4}
   occasion-classifier:
     # Reuses OPENAI_API_KEY / OPENAI_API_BASE_URL (same OpenAI account as
     # retail-search above). No default API key - the app must start fine

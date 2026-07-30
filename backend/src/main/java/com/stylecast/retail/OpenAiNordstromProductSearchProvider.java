@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * {@link RetailProductSearchProvider} backed by the OpenAI Responses API's
@@ -34,11 +35,22 @@ import java.util.Map;
  *
  * <p>Only {@code url_citation} annotations from the model's response - which
  * are populated by the search tool itself, not generated free-form by the
- * model - are used as candidate sources. Every other candidate field (price,
- * currency, image, description, sizes, availability) is left {@code null}/
- * empty because it cannot be independently confirmed from a citation alone;
- * this is a deliberate design choice to satisfy the "never invent a field"
- * requirement rather than parsing model prose.
+ * model - are used as candidate sources. {@code category} is set to the
+ * request's own (already-known) category - never invented, just carried
+ * forward. Every other candidate field (price, currency, image,
+ * description, brand, color, sizes, availability) starts {@code null}/empty
+ * because it cannot be independently confirmed from a citation alone; a
+ * bounded number of candidates are then passed to a {@link
+ * ProductDetailEnricher} (see {@link #enrichCandidates}) which may fill
+ * some of them in with independently confirmed data.
+ *
+ * <p>Candidates whose title carries an explicit, conflicting men's/women's
+ * marker for the request's {@link TargetAudience} are filtered out (see
+ * {@link CandidateAudienceClassifier}) - this is what prevents e.g. a
+ * men's-only request from returning a women's blouse alongside men's
+ * trousers. The same acceptability check is re-applied after enrichment,
+ * since enrichment may independently confirm a department that conflicts
+ * with the request even when the title alone did not.
  */
 @Component
 public class OpenAiNordstromProductSearchProvider implements RetailProductSearchProvider {
@@ -50,13 +62,16 @@ public class OpenAiNordstromProductSearchProvider implements RetailProductSearch
     private final RetailSearchProperties properties;
     private final ObjectMapper objectMapper;
     private final WebClient webClient;
+    private final ProductDetailEnricher enricher;
 
     public OpenAiNordstromProductSearchProvider(
             RetailSearchProperties properties,
             ObjectMapper objectMapper,
-            WebClient.Builder webClientBuilder) {
+            WebClient.Builder webClientBuilder,
+            ProductDetailEnricher enricher) {
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.enricher = enricher;
 
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, Math.toIntExact(properties.connectTimeoutMs()))
@@ -78,7 +93,51 @@ public class OpenAiNordstromProductSearchProvider implements RetailProductSearch
         ObjectNode requestBody = buildRequestBody(request);
         JsonNode responseJson = callOpenAi(requestBody);
         List<RetailProductCandidate> candidates = extractCandidates(responseJson, request);
-        return new RetailProductSearchResult(candidates);
+        List<RetailProductCandidate> enriched = enrichCandidates(candidates, request.targetAudience());
+        return new RetailProductSearchResult(enriched);
+    }
+
+    /**
+     * Attempts to enrich up to {@link RetailSearchProperties#enrichmentMaxCandidates()}
+     * candidates (in list order) with {@link #enricher}; any candidate beyond
+     * that bound, or whose enrichment attempt fails or finds nothing, is
+     * returned unchanged - enrichment is strictly additive and never removes
+     * or invalidates an otherwise-valid candidate on its own. However, a
+     * candidate whose enriched {@code audience} is no longer acceptable for
+     * {@code requestedDepartment} (see {@link CandidateAudienceClassifier#isAcceptable})
+     * is dropped here - enrichment can reveal a more trustworthy, conflicting
+     * department signal (breadcrumb/taxonomy) than the title alone showed.
+     */
+    List<RetailProductCandidate> enrichCandidates(
+            List<RetailProductCandidate> candidates, TargetAudience requestedDepartment) {
+        List<RetailProductCandidate> result = new ArrayList<>(candidates.size());
+        int attempted = 0;
+        for (RetailProductCandidate candidate : candidates) {
+            RetailProductCandidate enriched = candidate;
+            if (attempted < properties.enrichmentMaxCandidates()) {
+                attempted++;
+                enriched = tryEnrich(candidate);
+            }
+            if (CandidateAudienceClassifier.isAcceptable(enriched.audience(), requestedDepartment)) {
+                result.add(enriched);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * {@link ProductDetailEnricher} implementations must never throw, but this
+     * is a defensive safety net regardless - a misbehaving enricher must still
+     * never discard an otherwise-valid candidate.
+     */
+    private RetailProductCandidate tryEnrich(RetailProductCandidate candidate) {
+        try {
+            Optional<ProductPageDetails> details = enricher.enrich(candidate.productUrl());
+            return details.map(candidate::withPageDetails).orElse(candidate);
+        } catch (RuntimeException e) {
+            log.debug("Product detail enrichment failed for a candidate URL: {}", e.getClass().getSimpleName());
+            return candidate;
+        }
     }
 
     private ObjectNode buildRequestBody(RetailProductSearchRequest request) {
@@ -214,6 +273,10 @@ public class OpenAiNordstromProductSearchProvider implements RetailProductSearch
             if (!NordstromUrlValidator.isValidNordstromProductUrl(citation.url())) {
                 continue;
             }
+            CandidateAudience candidateAudience = CandidateAudienceClassifier.classifyFromTitle(citation.title());
+            if (!CandidateAudienceClassifier.isAcceptable(candidateAudience, request.targetAudience())) {
+                continue;
+            }
             String canonicalUrl = NordstromUrlValidator.canonicalize(citation.url());
             if (byCanonicalUrl.containsKey(canonicalUrl)) {
                 continue;
@@ -223,13 +286,20 @@ public class OpenAiNordstromProductSearchProvider implements RetailProductSearch
                     request.retailer(),
                     citation.title(),
                     null,
+                    request.category(),
+                    null,
                     null,
                     null,
                     canonicalUrl,
                     null,
                     null,
+                    null,
                     List.of(),
+                    null,
                     false,
+                    false,
+                    false,
+                    candidateAudience,
                     retrievedAt,
                     "OpenAI web_search url_citation"));
         }

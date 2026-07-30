@@ -122,9 +122,10 @@ class DevRetailProductSearchControllerTest {
     @Test
     void search_withValidCandidates_returns200WithCandidates() {
         RetailProductCandidate candidate = new RetailProductCandidate(
-                RetailProductSource.AI_WEB_SEARCH, Retailer.NORDSTROM, "Navy Wedding Suit",
-                null, null, null, "https://www.nordstrom.com/s/navy-wedding-suit/1234567",
-                null, null, List.of(), false, Instant.now(), "fake");
+                RetailProductSource.AI_WEB_SEARCH, Retailer.NORDSTROM, "Navy Wedding Suit", null,
+                null, null, null, null, "https://www.nordstrom.com/s/navy-wedding-suit/1234567",
+                null, null, null, List.of(), null, false, false, false, CandidateAudience.UNKNOWN,
+                Instant.now(), "fake");
         fakeProvider.nextResult.set(new RetailProductSearchResult(List.of(candidate)));
         RetailProductSearchApiRequest request = new RetailProductSearchApiRequest(
                 Retailer.NORDSTROM, ProductCategory.SUIT, List.of("navy", "wedding"),

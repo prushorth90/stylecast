@@ -25,6 +25,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 /**
  * Full-request tests for {@code GET /api/events/{eventId}/interpretation} and
@@ -124,12 +125,13 @@ class OccasionInterpretationControllerTest {
         assertThat(first).isNotNull();
         assertThat(second).isNotNull();
         assertThat(second.id()).isEqualTo(first.id());
-        // Compare truncated to microseconds: the first response may still carry the
-        // original nanosecond-precision Instant from before it was ever persisted, while
-        // the second response is read back from PostgreSQL's TIMESTAMPTZ column, which
-        // only stores microsecond precision - both refer to the same saved row/value.
-        assertThat(second.generatedAt().truncatedTo(ChronoUnit.MICROS))
-                .isEqualTo(first.generatedAt().truncatedTo(ChronoUnit.MICROS));
+        // Compare within a strict 1-microsecond tolerance rather than exact equality: the
+        // first response may still carry the original Instant from before it was ever
+        // persisted, while the second response is read back from PostgreSQL's TIMESTAMPTZ
+        // column, which stores (and rounds to, not truncates to) microsecond precision - so
+        // the two values can legitimately differ by exactly one microsecond due to rounding.
+        assertThat(second.generatedAt()).isCloseTo(first.generatedAt(), within(1, ChronoUnit.MICROS));
+        // Exactly one interpretation row exists for the event - the second GET never created a duplicate.
         assertThat(interpretationRepository.findAll()).hasSize(1);
     }
 
