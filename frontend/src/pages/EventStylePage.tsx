@@ -1,7 +1,5 @@
 import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
-import Card from '@mui/material/Card';
-import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Divider from '@mui/material/Divider';
@@ -9,10 +7,12 @@ import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import { Link as RouterLink, useParams } from 'react-router-dom';
 import { EventOccasionCard } from '../components/styling/EventOccasionCard';
+import { EventRecommendationsCard } from '../components/styling/EventRecommendationsCard';
 import { EventWeatherCard } from '../components/styling/EventWeatherCard';
 import { StylePreferencesForm } from '../components/styling/StylePreferencesForm';
 import { useEvent } from '../hooks/useEvents';
 import { useEventOccasionInterpretation } from '../hooks/useEventOccasion';
+import { useEventRecommendations } from '../hooks/useEventRecommendations';
 import { useEventWeather } from '../hooks/useEventWeather';
 import { useEventStylePreferences } from '../hooks/useStylePreferences';
 
@@ -49,6 +49,11 @@ export function EventStylePage() {
     isPending: isOccasionPending,
     isError: isOccasionError,
   } = useEventOccasionInterpretation(eventId);
+  const {
+    data: recommendations,
+    isPending: isRecommendationsPending,
+    isError: isRecommendationsError,
+  } = useEventRecommendations(eventId);
 
   if (isEventPending) {
     return (
@@ -110,14 +115,14 @@ export function EventStylePage() {
         />
       )}
 
-      <Card variant="outlined">
-        <CardContent>
-          <Typography variant="h6" component="h2" gutterBottom>
-            Status
-          </Typography>
-          <Alert severity="info">Recommendations: coming in a later task.</Alert>
-        </CardContent>
-      </Card>
+      {event.id && (
+        <EventRecommendationsCard
+          eventId={event.id}
+          recommendations={recommendations}
+          isLoading={isRecommendationsPending}
+          isError={isRecommendationsError}
+        />
+      )}
 
       <Divider />
 
@@ -145,20 +150,6 @@ export function EventStylePage() {
           <StylePreferencesForm eventId={event.id} initialPreferences={preferences ?? null} />
         )}
       </Stack>
-
-      <Divider />
-
-      <Card variant="outlined">
-        <CardContent>
-          <Typography variant="h6" component="h2" gutterBottom>
-            Recommended looks
-          </Typography>
-          <Typography variant="body1" color="text.secondary">
-            Outfit recommendations will appear here in a later task, once weather, occasion
-            analysis, and the product catalog are available.
-          </Typography>
-        </CardContent>
-      </Card>
     </Stack>
   );
 }

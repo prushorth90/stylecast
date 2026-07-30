@@ -151,6 +151,108 @@ function preferencesResponse(overrides: Record<string, unknown> = {}) {
   );
 }
 
+function recommendationsNotGeneratedResponse() {
+  return new Response(
+    JSON.stringify({
+      eventId: EVENT_ID,
+      generation: 0,
+      generatedAt: null,
+      hasResults: false,
+      noResultReason: 'Recommendations have not been generated yet for this event.',
+      recommendations: [],
+    }),
+    { status: 200 },
+  );
+}
+
+function recommendationsNoResultsResponse() {
+  return new Response(
+    JSON.stringify({
+      eventId: EVENT_ID,
+      generation: 1,
+      generatedAt: '2026-07-28T12:00:00Z',
+      hasResults: false,
+      noResultReason: 'No combination of eligible products satisfies the budget of 50 together with all requirements.',
+      recommendations: [],
+    }),
+    { status: 200 },
+  );
+}
+
+function recommendationsWithResultsResponse(overrides: Record<string, unknown> = {}) {
+  return new Response(
+    JSON.stringify({
+      eventId: EVENT_ID,
+      generation: 1,
+      generatedAt: '2026-07-28T12:00:00Z',
+      hasResults: true,
+      noResultReason: null,
+      recommendations: [
+        {
+          id: '55555555-5555-5555-5555-555555555555',
+          eventId: EVENT_ID,
+          generation: 1,
+          rank: 1,
+          name: 'Formal Menswear - Look 1',
+          status: 'ACTIVE',
+          source: 'LOCAL_CATALOG',
+          totalPrice: 480,
+          occasionFitScore: 88,
+          weatherFitScore: 75,
+          styleFitScore: 90,
+          colorFitScore: 70,
+          budgetEfficiencyScore: 96,
+          completenessScore: 100,
+          overallScore: 87,
+          explanation: 'Includes 2 items (SUIT, SHOES) for WEDDING at formality 9/10; total $480 within your $500 budget.',
+          generatedAt: '2026-07-28T12:00:00Z',
+          items: [
+            {
+              id: '66666666-6666-6666-6666-666666666666',
+              productId: '77777777-7777-7777-7777-777777777777',
+              productVariantId: '88888888-8888-8888-8888-888888888888',
+              category: 'SUIT',
+              brand: 'Birchwood Tailors',
+              name: 'Two-Piece Wool Suit',
+              color: 'Navy',
+              size: 'M',
+              itemPrice: 400,
+              displayOrder: 0,
+              imageUrl: null,
+            },
+            {
+              id: '99999999-9999-9999-9999-999999999999',
+              productId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+              productVariantId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+              category: 'SHOES',
+              brand: 'Rowan & Vale',
+              name: 'Leather Oxford Shoes',
+              color: 'Navy',
+              size: '10',
+              itemPrice: 80,
+              displayOrder: 1,
+              imageUrl: null,
+            },
+          ],
+        },
+      ],
+      ...overrides,
+    }),
+    { status: 200 },
+  );
+}
+
+function missingPreferencesErrorResponse() {
+  return new Response(
+    JSON.stringify({
+      message: 'Cannot generate outfit recommendations for event ' + EVENT_ID + ': styling preferences have not been saved yet',
+      fieldErrors: null,
+    }),
+    { status: 409 },
+  );
+}
+
+
 /** Default routing shared by most tests: real per-endpoint fixtures unless a test overrides them. */
 function defaultFetchRouter(input: RequestInfo | URL): Promise<Response> {
   const url = input.toString();
@@ -159,6 +261,9 @@ function defaultFetchRouter(input: RequestInfo | URL): Promise<Response> {
   }
   if (url.includes('/weather')) {
     return Promise.resolve(weatherAvailableResponse());
+  }
+  if (url.includes('/recommendations')) {
+    return Promise.resolve(recommendationsNotGeneratedResponse());
   }
   if (url.includes('/preferences')) {
     return Promise.resolve(notFoundResponse());
@@ -720,4 +825,179 @@ describe('EventStylePage', () => {
     expect(await screen.findByText('Partly cloudy')).toBeInTheDocument();
     expect(await screen.findByLabelText(labelMatcher('Outfit request'))).toBeInTheDocument();
   });
+
+  // --- Outfit recommendations (Task 7A) ---------------------------------------
+
+  it('loads existing recommendations automatically and labels them as demo catalog results', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return Promise.resolve(recommendationsWithResultsResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Formal Menswear - Look 1')).toBeInTheDocument();
+    expect(screen.getByText('Demo catalog recommendations')).toBeInTheDocument();
+    // Auto-loaded via GET - no generate click happened.
+    expect(fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/recommendations/generate'),
+      expect.anything(),
+    );
+  });
+
+  it('shows a loading state while recommendations are being fetched', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return new Promise(() => {});
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Loading recommendations…')).toBeInTheDocument();
+  });
+
+  it('shows a no-results state when nothing has been generated yet', async () => {
+    vi.mocked(fetch).mockImplementation((input) => defaultFetchRouter(input));
+
+    renderPage();
+
+    expect(
+      await screen.findByText('Recommendations have not been generated yet for this event.'),
+    ).toBeInTheDocument();
+  });
+
+  it('generates recommendations via POST when clicking Generate Looks, showing a loading state and the resulting summary cards', async () => {
+    let resolveGenerate: (value: Response) => void = () => {};
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/recommendations/generate')) {
+        return new Promise((resolve) => {
+          resolveGenerate = resolve;
+        });
+      }
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return Promise.resolve(recommendationsNotGeneratedResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    const generateButton = await screen.findByText('Generate Looks');
+    await user.click(generateButton);
+
+    expect(await screen.findByText('Generating looks from the demo catalog…')).toBeInTheDocument();
+    expect(screen.getByText('Generating…').closest('button')).toBeDisabled();
+
+    resolveGenerate(recommendationsWithResultsResponse());
+
+    expect(await screen.findByText('Formal Menswear - Look 1')).toBeInTheDocument();
+    expect(screen.getByText(/Two-Piece Wool Suit/)).toBeInTheDocument();
+    expect(screen.getByText(/Leather Oxford Shoes/)).toBeInTheDocument();
+    expect(screen.getByText('Total: $480.00')).toBeInTheDocument();
+    expect(screen.getByText('Occasion fit: 88/100')).toBeInTheDocument();
+    expect(screen.getByText('Weather fit: 75/100')).toBeInTheDocument();
+    expect(screen.getByText('Overall fit: 87/100')).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/events/${EVENT_ID}/recommendations/generate`),
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('shows a no-results message when generation finds no valid outfit', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/recommendations/generate')) {
+        return Promise.resolve(recommendationsNoResultsResponse());
+      }
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return Promise.resolve(recommendationsNotGeneratedResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByText('Generate Looks'));
+
+    expect(
+      await screen.findByText(
+        'No combination of eligible products satisfies the budget of 50 together with all requirements.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('shows a clear domain error when styling preferences have not been saved yet', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/recommendations/generate')) {
+        return Promise.resolve(missingPreferencesErrorResponse());
+      }
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return Promise.resolve(recommendationsNotGeneratedResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByText('Generate Looks'));
+
+    expect(await screen.findByText(/styling preferences have not been saved yet/)).toBeInTheDocument();
+  });
 });
+

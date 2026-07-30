@@ -5,6 +5,8 @@ import com.stylecast.catalog.ProductNotFoundException;
 import com.stylecast.event.EventNotFoundException;
 import com.stylecast.event.InvalidEventException;
 import com.stylecast.event.styling.EventStylePreferencesNotFoundException;
+import com.stylecast.recommendation.MissingOccasionInterpretationException;
+import com.stylecast.recommendation.MissingStylePreferencesException;
 import com.stylecast.retail.InvalidRetailSearchRequestException;
 import com.stylecast.retail.ProductSearchProviderException;
 import com.stylecast.weather.GeocodingProviderException;
@@ -155,6 +157,19 @@ public class GlobalExceptionHandler {
                 null);
 
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler({MissingStylePreferencesException.class, MissingOccasionInterpretationException.class})
+    public ResponseEntity<ApiError> handleMissingRecommendationPrerequisite(RuntimeException ex, HttpServletRequest request) {
+        ApiError body = new ApiError(
+                Instant.now(),
+                HttpStatus.CONFLICT.value(),
+                HttpStatus.CONFLICT.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI(),
+                null);
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
     @ExceptionHandler(ProductSearchProviderException.class)

@@ -57,6 +57,15 @@ Implemented so far:
   page - and will be called automatically by the outfit-recommendation
   engine in a later task. See "Live retail product search (development)"
   below.
+- A deterministic outfit-recommendation engine (`com.stylecast.recommendation`,
+  Task 7A) that assembles up to three complete, ranked outfits for an event
+  from the local product catalog only - budget, sizes, stock, active
+  status, avoided colors, formality, and weather are all enforced as hard
+  constraints, with deterministic 0-100 scores for occasion/weather/style/
+  color fit, budget efficiency, and completeness used to rank results. The
+  event styling page's "Generate Looks" button and recommendation summary
+  cards are a temporary integration, not the final mood-board design. See
+  "Outfit recommendations" below.
 
 ### Live retail product search (development)
 
@@ -231,6 +240,50 @@ or invents product names, URLs, prices, or inventory.**
   rule-based classifier directly (see backend test classes under
   `com.stylecast.occasion`).
 
+### Outfit recommendations
+
+`com.stylecast.recommendation` deterministically assembles up to three
+complete outfits for an event from **the local product catalog only**. It
+never calls the live Nordstrom search provider, OpenAI, or any other LLM -
+every product, price, and variant it returns comes directly from the
+catalog seeded into PostgreSQL, and **all catalog products are fictional
+demo data**, not real Nordstrom (or any other retailer's) inventory.
+
+**Required prerequisites.** Generating recommendations for an event
+requires the event to already have saved styling preferences
+(`com.stylecast.event.styling`) and an occasion interpretation
+(`com.stylecast.occasion`); the latest weather snapshot
+(`com.stylecast.weather`) is used automatically when available, but is
+optional. Calling generate before preferences or an interpretation exist
+returns HTTP 409 with a clear message instead of guessing.
+
+- `POST /api/events/{eventId}/recommendations/generate` builds candidate
+  outfits from one or more outfit templates (e.g. formal/wedding menswear,
+  business/interview, smart casual, or a dress/skirt-based outfit),
+  filters every candidate against hard constraints (budget, required
+  categories, clothing/shoe size, in-stock, active, avoided colors,
+  formality, and weather where data exists), scores the valid ones
+  deterministically, and persists up to three ranked outfits as a new,
+  versioned "generation" for the event - the previous generation's rows
+  are kept and marked superseded rather than deleted.
+- `GET /api/events/{eventId}/recommendations` returns the event's current
+  (latest generation) recommendations. **It never generates anything on
+  its own** - repeating `GET` never re-runs generation; only the explicit
+  `generate` call does.
+- **No-results is not an error:** when no valid combination of catalog
+  products satisfies every hard constraint (e.g. the budget is too low),
+  both endpoints return HTTP 200 with `hasResults: false` and a
+  human-readable `noResultReason` - never a 4xx/5xx error and never a
+  fabricated outfit.
+- The event styling page's "Generate Looks" button and recommendation
+  summary cards (showing item names/categories/sizes/colors/prices, total
+  price, and occasion/weather/overall fit scores) are a **temporary**
+  integration for this task, clearly labeled "Demo catalog recommendations"
+  - not the final Pinterest-style mood board.
+- Automated tests never call a live retail provider or the OpenAI API -
+  the engine has no dependency on `com.stylecast.retail`, `WebClient`, or
+  any AI classifier (see backend test classes under
+  `com.stylecast.recommendation`).
 
 ## Planned stack
 
