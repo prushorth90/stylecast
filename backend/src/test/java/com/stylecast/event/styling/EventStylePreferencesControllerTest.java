@@ -170,6 +170,82 @@ class EventStylePreferencesControllerTest {
     }
 
     @Test
+    void putPreferences_firstSave_doesNotRecommendInterpretationRefresh() {
+        ResponseEntity<PreferencesResponseBody> response = restTemplate.exchange(
+                url("/api/events/" + eventId + "/preferences"),
+                HttpMethod.PUT,
+                jsonRequest(validRequestBody()),
+                PreferencesResponseBody.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().interpretationRefreshRecommended()).isFalse();
+    }
+
+    @Test
+    void putPreferences_changingOutfitRequest_recommendsInterpretationRefresh() {
+        restTemplate.exchange(
+                url("/api/events/" + eventId + "/preferences"),
+                HttpMethod.PUT,
+                jsonRequest(validRequestBody()),
+                PreferencesResponseBody.class);
+
+        Map<String, Object> changed = new HashMap<>(validRequestBody());
+        changed.put("outfitRequest", "I want a soccer jersey and shorts.");
+
+        ResponseEntity<PreferencesResponseBody> response = restTemplate.exchange(
+                url("/api/events/" + eventId + "/preferences"),
+                HttpMethod.PUT,
+                jsonRequest(changed),
+                PreferencesResponseBody.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().interpretationRefreshRecommended()).isTrue();
+    }
+
+    @Test
+    void putPreferences_withOnlyBudgetChanged_doesNotRecommendInterpretationRefresh() {
+        restTemplate.exchange(
+                url("/api/events/" + eventId + "/preferences"),
+                HttpMethod.PUT,
+                jsonRequest(validRequestBody()),
+                PreferencesResponseBody.class);
+
+        Map<String, Object> changed = new HashMap<>(validRequestBody());
+        changed.put("maxBudget", "750.00");
+
+        ResponseEntity<PreferencesResponseBody> response = restTemplate.exchange(
+                url("/api/events/" + eventId + "/preferences"),
+                HttpMethod.PUT,
+                jsonRequest(changed),
+                PreferencesResponseBody.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().interpretationRefreshRecommended()).isFalse();
+    }
+
+    @Test
+    void putPreferences_withIdenticalValues_doesNotRecommendInterpretationRefresh() {
+        restTemplate.exchange(
+                url("/api/events/" + eventId + "/preferences"),
+                HttpMethod.PUT,
+                jsonRequest(validRequestBody()),
+                PreferencesResponseBody.class);
+
+        ResponseEntity<PreferencesResponseBody> response = restTemplate.exchange(
+                url("/api/events/" + eventId + "/preferences"),
+                HttpMethod.PUT,
+                jsonRequest(validRequestBody()),
+                PreferencesResponseBody.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().interpretationRefreshRecommended()).isFalse();
+    }
+
+    @Test
     void putPreferences_withUnknownEvent_returns404() {
         UUID unknownEventId = UUID.randomUUID();
 
@@ -341,6 +417,7 @@ class EventStylePreferencesControllerTest {
             List<String> colorsToAvoid,
             String shoppingDepartment,
             String createdAt,
-            String updatedAt) {
+            String updatedAt,
+            boolean interpretationRefreshRecommended) {
     }
 }

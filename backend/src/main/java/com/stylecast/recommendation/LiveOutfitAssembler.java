@@ -1,6 +1,7 @@
 package com.stylecast.recommendation;
 
 import com.stylecast.catalog.ProductCategory;
+import com.stylecast.occasion.RequestedItem;
 import com.stylecast.retail.RetailProductCandidate;
 import org.springframework.stereotype.Component;
 
@@ -9,6 +10,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Assembles up to three outfits from live Nordstrom search candidates
@@ -58,12 +60,49 @@ class LiveOutfitAssembler {
             for (ProductCategory category : found) {
                 List<RetailProductCandidate> candidates = candidatesByCategory.get(category);
                 RetailProductCandidate candidate = candidates.get(Math.min(index, candidates.size() - 1));
-                items.add(new LiveSelectedItem(category, candidate));
+                items.add(new LiveSelectedItem(category, null, candidate));
             }
 
             String key = productUrlKey(items);
             if (seenProductUrlSets.add(key)) {
                 outfits.add(new LiveAssembledOutfit(items));
+            }
+        }
+
+        return outfits;
+    }
+
+    /**
+     * Item-based counterpart of {@link #assemble} used whenever an event
+     * has explicit {@link RequestedItem}s (Task 8.5) - keyed by each item's
+     * own identity rather than {@link ProductCategory}, since two distinct
+     * requested items can share the same broad {@code genericCategory} (two
+     * TOP items, for example). A missing item is never substituted with an
+     * unrelated candidate from another item or category - it is simply
+     * omitted from every assembled outfit, exactly like a missing category
+     * is omitted in {@link #assemble}.
+     */
+    List<LiveAssembledOutfit> assembleFromItems(
+            Map<UUID, List<RetailProductCandidate>> candidatesByItemId, List<RequestedItem> items) {
+        List<RequestedItem> found = foundItems(candidatesByItemId, items);
+        if (found.isEmpty()) {
+            return List.of();
+        }
+
+        List<LiveAssembledOutfit> outfits = new ArrayList<>();
+        Set<String> seenProductUrlSets = new LinkedHashSet<>();
+
+        for (int index = 0; index < MAX_OUTFITS; index++) {
+            List<LiveSelectedItem> selected = new ArrayList<>();
+            for (RequestedItem item : found) {
+                List<RetailProductCandidate> candidates = candidatesByItemId.get(item.id());
+                RetailProductCandidate candidate = candidates.get(Math.min(index, candidates.size() - 1));
+                selected.add(new LiveSelectedItem(null, item, candidate));
+            }
+
+            String key = productUrlKey(selected);
+            if (seenProductUrlSets.add(key)) {
+                outfits.add(new LiveAssembledOutfit(selected));
             }
         }
 
@@ -84,6 +123,20 @@ class LiveOutfitAssembler {
                 .toList();
     }
 
+    /** Which requested items found at least one candidate. */
+    List<RequestedItem> foundItems(Map<UUID, List<RetailProductCandidate>> candidatesByItemId, List<RequestedItem> items) {
+        return items.stream()
+                .filter(item -> !candidatesByItemId.getOrDefault(item.id(), List.of()).isEmpty())
+                .toList();
+    }
+
+    /** Which requested items (if any) had zero candidates - these must remain missing, never substituted. */
+    List<RequestedItem> itemsWithNoCandidates(Map<UUID, List<RetailProductCandidate>> candidatesByItemId, List<RequestedItem> items) {
+        return items.stream()
+                .filter(item -> candidatesByItemId.getOrDefault(item.id(), List.of()).isEmpty())
+                .toList();
+    }
+
     private String productUrlKey(List<LiveSelectedItem> items) {
         return items.stream()
                 .map(item -> item.candidate().productUrl())
@@ -92,7 +145,14 @@ class LiveOutfitAssembler {
                 .orElse("");
     }
 
-    record LiveSelectedItem(ProductCategory category, RetailProductCandidate candidate) {
+    /**
+     * Exactly one of {@code category}/{@code requestedItem} is non-null,
+     * depending on which pipeline produced this selection - {@link
+     * LiveRecommendationService#persistOutfit} branches on {@code
+     * requestedItem} to decide which columns to populate on the persisted
+     * {@link LiveOutfitItem}.
+     */
+    record LiveSelectedItem(ProductCategory category, RequestedItem requestedItem, RetailProductCandidate candidate) {
     }
 
     record LiveAssembledOutfit(List<LiveSelectedItem> items) {

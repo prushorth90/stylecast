@@ -1,6 +1,7 @@
 package com.stylecast.recommendation;
 
 import com.stylecast.recommendation.dto.LiveRecommendationsResponse;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -32,6 +33,17 @@ public class LiveRecommendationController {
     @PostMapping("/retry-missing")
     public LiveRecommendationsResponse retryMissing(@PathVariable UUID eventId) {
         return liveRecommendationService.retryMissing(eventId);
+    }
+
+    /**
+     * Marks the event's current live recommendations as stale, without
+     * calling the live search provider - used by the event setup flow
+     * after saved preferences changed in an interpretation-relevant way.
+     */
+    @PostMapping("/invalidate-stale")
+    public ResponseEntity<Void> invalidateStale(@PathVariable UUID eventId) {
+        liveRecommendationService.invalidateStaleRecommendations(eventId);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping

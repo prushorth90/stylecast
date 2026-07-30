@@ -7,6 +7,14 @@ export type ShoppingDepartment = 'MEN' | 'WOMEN' | 'UNISEX' | 'NO_PREFERENCE';
 
 /**
  * An event's saved styling preferences, as returned by the backend.
+ *
+ * `interpretationRefreshRecommended` is only ever `true` on the response to
+ * a save that changed an interpretation-relevant field (outfitRequest/
+ * preferredStyle/preferredColors/colorsToAvoid) on an already-existing
+ * record - never on the very first save for an event, and never on a plain
+ * fetch. The event setup modal uses this to decide whether to explicitly
+ * regenerate the occasion interpretation and invalidate stale
+ * recommendations after saving.
  */
 export interface EventStylePreferences {
   id: string;
@@ -21,6 +29,7 @@ export interface EventStylePreferences {
   shoppingDepartment: ShoppingDepartment;
   createdAt: string;
   updatedAt: string;
+  interpretationRefreshRecommended: boolean;
 }
 
 export interface SaveEventStylePreferencesInput {

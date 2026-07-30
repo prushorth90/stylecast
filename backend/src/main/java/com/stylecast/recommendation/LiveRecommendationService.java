@@ -1,8 +1,10 @@
 package com.stylecast.recommendation;
 
 import com.stylecast.catalog.ProductCategory;
+import com.stylecast.occasion.RequestedItem;
 import com.stylecast.recommendation.LiveOutfitAssembler.LiveAssembledOutfit;
 import com.stylecast.recommendation.LiveOutfitAssembler.LiveSelectedItem;
+import com.stylecast.recommendation.RequestedItemSearchRequestFactory.RequestedItemSearchRequest;
 import com.stylecast.recommendation.dto.LiveOutfitItemResponse;
 import com.stylecast.recommendation.dto.LiveOutfitRecommendationResponse;
 import com.stylecast.recommendation.dto.LiveRecommendationsResponse;
@@ -17,41 +19,62 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * Application service orchestrating live outfit generation for an event:
+ * Application service orchestrating live outfit generation for an event.
+ * Two parallel pipelines exist, and an event uses exactly one per
+ * generation, chosen by {@link RecommendationContext#requestedItems()}:
  *
  * <pre>
- * RecommendationContextLoader -> LiveCategorySearchRequestFactory
- *   -> RetailProductSearchService (one call per required category, independently)
- *   -> LiveOutfitAssembler -> persist -> respond
+ * Explicit-item pipeline (Task 8.5, tried first):
+ *   RecommendationContextLoader -&gt; RequestedItemSearchRequestFactory
+ *     -&gt; RetailProductSearchService (one call per explicit RequestedItem)
+ *     -&gt; LiveOutfitAssembler.assembleFromItems -&gt; persist -&gt; respond
+ *
+ * Category-template pipeline (Task 8, fallback when no explicit items exist):
+ *   RecommendationContextLoader -&gt; LiveCategorySearchRequestFactory
+ *     -&gt; RetailProductSearchService (one call per required category)
+ *     -&gt; LiveOutfitAssembler.assemble -&gt; persist -&gt; respond
  * </pre>
+ *
+ * <p>Whenever an event's occasion interpretation extracted explicit product
+ * phrases (e.g. "USA soccer jersey"), those take priority over the
+ * interpretation's broad {@code requiredCategories} - the category-template
+ * pipeline is only used when no explicit items exist at all (including
+ * every interpretation generated before Task 8.5 existed, which always has
+ * an empty requested-items list).
  *
  * <p>Every candidate comes from {@code com.stylecast.retail}'s live
  * Nordstrom product-search provider - this service has no dependency on
  * {@code com.stylecast.catalog} and never substitutes local/fictional
- * products. Each required category is searched independently: a {@link
- * ProductSearchProviderException} from one category's search is caught and
- * that category is simply treated as missing - it never discards candidates
- * already found for other categories, and never aborts the whole attempt.
+ * products, and never substitutes an unrelated candidate (from another
+ * category or another requested item) just because it shares a broad
+ * category. Each required category/requested item is searched
+ * independently: a {@link ProductSearchProviderException} from one is
+ * caught and that one is simply treated as missing - it never discards
+ * candidates already found for others, and never aborts the whole attempt.
  * The overall {@link LiveRecommendationCompleteness} reflects this:
- * {@code COMPLETE} (every category found something), {@code PARTIAL} (some
- * did, some didn't - valid candidates for the successful categories are
- * still returned), {@code NO_RESULTS} (every category was searched
- * successfully but found nothing), or {@code PROVIDER_UNAVAILABLE} (every
- * attempted search failed at the provider level - a transient outage).
+ * {@code COMPLETE} (everything found something), {@code PARTIAL} (some
+ * did, some didn't - valid candidates for the successful ones are still
+ * returned), {@code NO_RESULTS} (everything was searched successfully but
+ * found nothing), or {@code PROVIDER_UNAVAILABLE} (every attempted search
+ * errored at the provider level - a transient outage).
  */
 @Service
 public class LiveRecommendationService {
 
     private final RecommendationContextLoader contextLoader;
     private final LiveCategorySearchRequestFactory requestFactory;
+    private final RequestedItemSearchRequestFactory requestedItemRequestFactory;
     private final RetailProductSearchService retailSearchService;
     private final LiveOutfitAssembler assembler;
     private final LiveOutfitRecommendationRepository repository;
@@ -59,21 +82,23 @@ public class LiveRecommendationService {
     public LiveRecommendationService(
             RecommendationContextLoader contextLoader,
             LiveCategorySearchRequestFactory requestFactory,
+            RequestedItemSearchRequestFactory requestedItemRequestFactory,
             RetailProductSearchService retailSearchService,
             LiveOutfitAssembler assembler,
             LiveOutfitRecommendationRepository repository) {
         this.contextLoader = contextLoader;
         this.requestFactory = requestFactory;
+        this.requestedItemRequestFactory = requestedItemRequestFactory;
         this.retailSearchService = retailSearchService;
         this.assembler = assembler;
         this.repository = repository;
     }
 
     /**
-     * Searches every required category (independently) and persists the
-     * result as a new generation. Throws {@link
-     * com.stylecast.event.EventNotFoundException} (404), {@link
-     * MissingStylePreferencesException} (409), or {@link
+     * Searches every explicit requested item (if any exist), otherwise
+     * every required category, and persists the result as a new
+     * generation. Throws {@link com.stylecast.event.EventNotFoundException}
+     * (404), {@link MissingStylePreferencesException} (409), or {@link
      * MissingOccasionInterpretationException} (409) if a prerequisite is
      * missing. Never throws for a live-search failure - see {@link
      * LiveRecommendationCompleteness#PROVIDER_UNAVAILABLE}.
@@ -81,27 +106,33 @@ public class LiveRecommendationService {
     @Transactional
     public LiveRecommendationsResponse generate(UUID eventId) {
         RecommendationContext context = contextLoader.load(eventId);
+        return generateFresh(eventId, context, context.requestedItems());
+    }
+
+    private LiveRecommendationsResponse generateFresh(UUID eventId, RecommendationContext context, List<RequestedItem> requestedItems) {
+        if (!requestedItems.isEmpty()) {
+            return executeAndPersistForItems(eventId, context, requestedItems, requestedItems, new LinkedHashMap<>());
+        }
         List<ProductCategory> requiredCategories = context.requiredCategories();
         return executeAndPersist(eventId, context, requiredCategories, requiredCategories, new EnumMap<>(ProductCategory.class));
     }
 
     /**
-     * Re-searches only the categories the latest generation was missing,
-     * reusing the candidates already found for every other category (no
-     * repeated search calls for categories that already succeeded) - bounds
-     * the added API cost of a retry to just the gap. A no-op (no search
-     * calls at all, current state returned unchanged) when the latest
-     * generation had no missing categories, or nothing has been generated
-     * yet a fresh {@link #generate} is performed instead.
+     * Re-searches only what the latest generation was missing (whether that
+     * generation used the explicit-item or category-template pipeline),
+     * reusing everything already found - bounds the added API cost of a
+     * retry to just the gap. A no-op (current state returned unchanged)
+     * when nothing was missing, or a fresh {@link #generate} when nothing
+     * has been generated yet.
      */
     @Transactional
     public LiveRecommendationsResponse retryMissing(UUID eventId) {
         RecommendationContext context = contextLoader.load(eventId);
-        List<ProductCategory> requiredCategories = context.requiredCategories();
+        List<RequestedItem> requestedItems = context.requestedItems();
 
         Optional<LiveOutfitRecommendation> latest = repository.findFirstByEventIdOrderByGenerationDesc(eventId);
         if (latest.isEmpty()) {
-            return executeAndPersist(eventId, context, requiredCategories, requiredCategories, new EnumMap<>(ProductCategory.class));
+            return generateFresh(eventId, context, requestedItems);
         }
 
         int latestGeneration = latest.get().getGeneration();
@@ -110,15 +141,65 @@ public class LiveRecommendationService {
                 .stream()
                 .filter(row -> row.getGeneration() == latestGeneration)
                 .toList();
+        LiveOutfitRecommendation summaryRow = latestRows.isEmpty() ? latest.get() : latestRows.get(0);
 
-        List<ProductCategory> previousMissing = latestRows.isEmpty() ? requiredCategories : latestRows.get(0).getMissingCategories();
-        if (previousMissing.isEmpty()) {
-            // Nothing missing to retry - avoid an unnecessary live-search call.
-            return buildResponse(eventId);
+        if (!requestedItems.isEmpty()) {
+            List<RequestedItemSummary> previousMissingSummaries = summaryRow.getMissingRequestedItems();
+            if (previousMissingSummaries.isEmpty()) {
+                // Nothing missing to retry - avoid an unnecessary live-search call.
+                return buildResponse(eventId);
+            }
+            Set<UUID> missingIds = previousMissingSummaries.stream().map(RequestedItemSummary::id).collect(Collectors.toSet());
+            List<RequestedItem> previousMissingItems = requestedItems.stream()
+                    .filter(item -> missingIds.contains(item.id()))
+                    .toList();
+            if (previousMissingItems.isEmpty()) {
+                // The interpretation changed since the last generation (different item ids) -
+                // nothing can be safely retried; return the current state unchanged.
+                return buildResponse(eventId);
+            }
+            Map<UUID, List<RetailProductCandidate>> seedCandidates = reconstructFoundCandidatesByItem(latestRows);
+            return executeAndPersistForItems(eventId, context, requestedItems, previousMissingItems, seedCandidates);
         }
 
+        List<ProductCategory> requiredCategories = context.requiredCategories();
+        List<ProductCategory> previousMissing = summaryRow.getMissingCategories();
+        if (previousMissing.isEmpty()) {
+            return buildResponse(eventId);
+        }
         Map<ProductCategory, List<RetailProductCandidate>> seedCandidates = reconstructFoundCandidates(latestRows);
         return executeAndPersist(eventId, context, requiredCategories, previousMissing, seedCandidates);
+    }
+
+    /**
+     * Marks the event's latest-generation recommendation row(s) (whether
+     * {@link RecommendationStatus#ACTIVE} or {@link
+     * RecommendationStatus#NO_VALID_OUTFIT}) as {@link
+     * LiveOutfitRecommendation#isStale() stale}, WITHOUT calling the live
+     * search provider or creating a new generation - used by the event
+     * setup flow when saved styling preferences changed in a way that
+     * makes the previously generated looks (based on the old preferences/
+     * interpretation) potentially outdated. A no-op when nothing has been
+     * generated yet for this event.
+     */
+    @Transactional
+    public void invalidateStaleRecommendations(UUID eventId) {
+        contextLoader.requireEvent(eventId);
+
+        Optional<LiveOutfitRecommendation> latest = repository.findFirstByEventIdOrderByGenerationDesc(eventId);
+        if (latest.isEmpty()) {
+            return;
+        }
+        int latestGeneration = latest.get().getGeneration();
+        List<LiveOutfitRecommendation> latestRows = repository
+                .findByEventIdAndStatusInOrderByRankPositionAsc(eventId, List.of(RecommendationStatus.ACTIVE, RecommendationStatus.NO_VALID_OUTFIT))
+                .stream()
+                .filter(row -> row.getGeneration() == latestGeneration)
+                .toList();
+
+        Instant now = Instant.now();
+        latestRows.forEach(row -> row.markStale(now));
+        repository.saveAll(latestRows);
     }
 
     /**
@@ -132,15 +213,8 @@ public class LiveRecommendationService {
         return buildResponse(eventId);
     }
 
-    /**
-     * Shared core for {@link #generate} and {@link #retryMissing}: builds a
-     * request per required category (so the per-category budget split is
-     * always based on the full required-category count, even on a retry),
-     * but only actually executes a search for categories in {@code
-     * categoriesToSearch} - {@code seedCandidates} supplies the rest
-     * (already-found candidates being reused, or an empty map for a fresh
-     * {@link #generate}).
-     */
+    // ---------- Category-template pipeline (Task 8, unchanged behavior) ----------
+
     private LiveRecommendationsResponse executeAndPersist(
             UUID eventId, RecommendationContext context, List<ProductCategory> requiredCategories,
             List<ProductCategory> categoriesToSearch, Map<ProductCategory, List<RetailProductCandidate>> seedCandidates) {
@@ -170,33 +244,25 @@ public class LiveRecommendationService {
         List<ProductCategory> found = assembler.foundCategories(candidatesByCategory, requiredCategories);
         List<ProductCategory> missing = assembler.categoriesWithNoCandidates(candidatesByCategory, requiredCategories);
         boolean allAttemptsFailed = attempted > 0 && errored == attempted;
-
-        LiveRecommendationCompleteness completeness;
-        if (found.isEmpty() && allAttemptsFailed) {
-            completeness = LiveRecommendationCompleteness.PROVIDER_UNAVAILABLE;
-        } else if (found.isEmpty()) {
-            completeness = LiveRecommendationCompleteness.NO_RESULTS;
-        } else if (missing.isEmpty()) {
-            completeness = LiveRecommendationCompleteness.COMPLETE;
-        } else {
-            completeness = LiveRecommendationCompleteness.PARTIAL;
-        }
-        String message = buildMessage(completeness, found, missing);
+        LiveRecommendationCompleteness completeness = deriveCompleteness(found.isEmpty(), missing.isEmpty(), allAttemptsFailed);
+        String message = buildCategoryMessage(completeness, found, missing);
 
         List<LiveAssembledOutfit> assemblies = assembler.assemble(candidatesByCategory, requiredCategories);
 
         Instant now = Instant.now();
-        int nextGeneration = repository.findFirstByEventIdOrderByGenerationDesc(eventId)
-                .map(r -> r.getGeneration() + 1)
-                .orElse(1);
+        int nextGeneration = nextGeneration(eventId);
         supersedeActiveRecommendations(eventId, now);
 
         if (assemblies.isEmpty()) {
-            repository.save(LiveOutfitRecommendation.withoutOutfit(eventId, nextGeneration, completeness, found, missing, message, now));
+            repository.save(LiveOutfitRecommendation.withoutOutfit(
+                    eventId, nextGeneration, completeness, found, missing, List.of(), List.of(), message, now));
         } else {
             int rank = 1;
             for (LiveAssembledOutfit outfit : assemblies) {
-                persistOutfit(eventId, nextGeneration, rank, outfit, requestByCategory, completeness, found, missing, message, now);
+                Function<LiveSelectedItem, String> sizeResolver =
+                        item -> requestByCategory.get(item.category()).clothingSize();
+                persistOutfit(eventId, nextGeneration, rank, outfit, sizeResolver,
+                        completeness, found, missing, List.of(), List.of(), message, now);
                 rank++;
             }
         }
@@ -207,8 +273,8 @@ public class LiveRecommendationService {
     /**
      * Reconstructs each category's already-found candidates from the latest
      * generation's persisted items (grouped by category, deduplicated by
-     * product URL) so {@link #retryMissing} never re-searches a category
-     * that already succeeded.
+     * product URL) so a category-based {@link #retryMissing} never
+     * re-searches a category that already succeeded.
      */
     private Map<ProductCategory, List<RetailProductCandidate>> reconstructFoundCandidates(List<LiveOutfitRecommendation> latestRows) {
         Map<ProductCategory, List<RetailProductCandidate>> byCategory = new EnumMap<>(ProductCategory.class);
@@ -217,6 +283,9 @@ public class LiveRecommendationService {
                 continue;
             }
             for (LiveOutfitItem item : row.getItems()) {
+                if (item.getCategory() == null) {
+                    continue;
+                }
                 List<RetailProductCandidate> candidates = byCategory.computeIfAbsent(item.getCategory(), c -> new ArrayList<>());
                 RetailProductCandidate candidate = toCandidate(item);
                 boolean alreadyPresent = candidates.stream().anyMatch(c -> c.productUrl().equals(candidate.productUrl()));
@@ -226,6 +295,98 @@ public class LiveRecommendationService {
             }
         }
         return byCategory;
+    }
+
+    // ---------- Explicit-item pipeline (Task 8.5) ----------
+
+    private LiveRecommendationsResponse executeAndPersistForItems(
+            UUID eventId, RecommendationContext context, List<RequestedItem> allItems,
+            List<RequestedItem> itemsToSearch, Map<UUID, List<RetailProductCandidate>> seedCandidates) {
+
+        Map<UUID, RetailProductSearchRequest> requestByItemId = new LinkedHashMap<>();
+        Map<UUID, List<RetailProductCandidate>> candidatesByItemId = new LinkedHashMap<>(seedCandidates);
+
+        int attempted = 0;
+        int errored = 0;
+        for (RequestedItemSearchRequest requestedItemRequest : requestedItemRequestFactory.buildRequests(context, allItems)) {
+            RequestedItem item = requestedItemRequest.item();
+            requestByItemId.put(item.id(), requestedItemRequest.request());
+            if (!containsItemId(itemsToSearch, item.id())) {
+                continue;
+            }
+            attempted++;
+            try {
+                candidatesByItemId.put(item.id(), retailSearchService.search(requestedItemRequest.request()).candidates());
+            } catch (ProductSearchProviderException e) {
+                // Caught per-item, never aborts the whole attempt, and never substitutes an
+                // unrelated candidate for this item - it simply remains missing.
+                errored++;
+                candidatesByItemId.putIfAbsent(item.id(), List.of());
+            }
+        }
+
+        List<RequestedItem> found = assembler.foundItems(candidatesByItemId, allItems);
+        List<RequestedItem> missing = assembler.itemsWithNoCandidates(candidatesByItemId, allItems);
+        boolean allAttemptsFailed = attempted > 0 && errored == attempted;
+        LiveRecommendationCompleteness completeness = deriveCompleteness(found.isEmpty(), missing.isEmpty(), allAttemptsFailed);
+        String message = buildItemMessage(completeness, found, missing);
+
+        List<LiveAssembledOutfit> assemblies = assembler.assembleFromItems(candidatesByItemId, allItems);
+
+        List<RequestedItemSummary> foundSummaries = found.stream().map(RequestedItemSummary::from).toList();
+        List<RequestedItemSummary> missingSummaries = missing.stream().map(RequestedItemSummary::from).toList();
+
+        Instant now = Instant.now();
+        int nextGeneration = nextGeneration(eventId);
+        supersedeActiveRecommendations(eventId, now);
+
+        if (assemblies.isEmpty()) {
+            repository.save(LiveOutfitRecommendation.withoutOutfit(
+                    eventId, nextGeneration, completeness, List.of(), List.of(), foundSummaries, missingSummaries, message, now));
+        } else {
+            int rank = 1;
+            for (LiveAssembledOutfit outfit : assemblies) {
+                Function<LiveSelectedItem, String> sizeResolver =
+                        item -> requestByItemId.get(item.requestedItem().id()).clothingSize();
+                persistOutfit(eventId, nextGeneration, rank, outfit, sizeResolver,
+                        completeness, List.of(), List.of(), foundSummaries, missingSummaries, message, now);
+                rank++;
+            }
+        }
+
+        return buildResponse(eventId);
+    }
+
+    private boolean containsItemId(List<RequestedItem> items, UUID itemId) {
+        return items.stream().anyMatch(item -> item.id().equals(itemId));
+    }
+
+    /**
+     * Reconstructs each requested item's already-found candidates from the
+     * latest generation's persisted items (grouped by {@code
+     * requestedItemId}, deduplicated by product URL) so an item-based
+     * {@link #retryMissing} never re-searches an item that already
+     * succeeded.
+     */
+    private Map<UUID, List<RetailProductCandidate>> reconstructFoundCandidatesByItem(List<LiveOutfitRecommendation> latestRows) {
+        Map<UUID, List<RetailProductCandidate>> byItemId = new LinkedHashMap<>();
+        for (LiveOutfitRecommendation row : latestRows) {
+            if (row.getStatus() != RecommendationStatus.ACTIVE) {
+                continue;
+            }
+            for (LiveOutfitItem item : row.getItems()) {
+                if (item.getRequestedItemId() == null) {
+                    continue;
+                }
+                List<RetailProductCandidate> candidates = byItemId.computeIfAbsent(item.getRequestedItemId(), id -> new ArrayList<>());
+                RetailProductCandidate candidate = toCandidate(item);
+                boolean alreadyPresent = candidates.stream().anyMatch(c -> c.productUrl().equals(candidate.productUrl()));
+                if (!alreadyPresent) {
+                    candidates.add(candidate);
+                }
+            }
+        }
+        return byItemId;
     }
 
     private RetailProductCandidate toCandidate(LiveOutfitItem item) {
@@ -252,41 +413,62 @@ public class LiveRecommendationService {
                 item.getSourceCitation());
     }
 
+    // ---------- Shared persistence/response building ----------
+
+    private LiveRecommendationCompleteness deriveCompleteness(boolean foundIsEmpty, boolean missingIsEmpty, boolean allAttemptsFailed) {
+        if (foundIsEmpty && allAttemptsFailed) {
+            return LiveRecommendationCompleteness.PROVIDER_UNAVAILABLE;
+        } else if (foundIsEmpty) {
+            return LiveRecommendationCompleteness.NO_RESULTS;
+        } else if (missingIsEmpty) {
+            return LiveRecommendationCompleteness.COMPLETE;
+        } else {
+            return LiveRecommendationCompleteness.PARTIAL;
+        }
+    }
+
+    private int nextGeneration(UUID eventId) {
+        return repository.findFirstByEventIdOrderByGenerationDesc(eventId).map(r -> r.getGeneration() + 1).orElse(1);
+    }
+
+    /**
+     * Persists one assembled outfit's items - shared by both pipelines
+     * since {@link LiveSelectedItem} already carries either a {@code
+     * category} or a {@code requestedItem} (never both), which is exactly
+     * the signal used here to decide which {@link LiveOutfitItem}
+     * constructor/columns to populate.
+     */
     private void persistOutfit(
-            UUID eventId, int generation, int rank, LiveAssembledOutfit outfit,
-            Map<ProductCategory, RetailProductSearchRequest> requestByCategory, LiveRecommendationCompleteness completeness,
-            List<ProductCategory> found, List<ProductCategory> missing, String message, Instant now) {
+            UUID eventId, int generation, int rank, LiveAssembledOutfit outfit, Function<LiveSelectedItem, String> sizeResolver,
+            LiveRecommendationCompleteness completeness, List<ProductCategory> found, List<ProductCategory> missing,
+            List<RequestedItemSummary> foundItems, List<RequestedItemSummary> missingItems, String message, Instant now) {
         String name = "Live Look " + rank;
         String explanation = buildExplanation(outfit);
         LiveOutfitRecommendation recommendation = LiveOutfitRecommendation.active(
-                eventId, generation, rank, name, explanation, completeness, found, missing, message, now);
+                eventId, generation, rank, name, explanation, completeness, found, missing, foundItems, missingItems, message, now);
 
         int displayOrder = 0;
-        for (LiveSelectedItem item : outfit.items()) {
-            RetailProductCandidate candidate = item.candidate();
-            String requestedSize = requestByCategory.get(item.category()).clothingSize();
-            recommendation.addItem(new LiveOutfitItem(
-                    UUID.randomUUID(),
-                    item.category(),
-                    candidate.retailer(),
-                    candidate.title(),
-                    candidate.brand(),
-                    candidate.productUrl(),
-                    candidate.imageUrl(),
-                    candidate.price(),
-                    candidate.originalPrice(),
-                    candidate.currency(),
-                    candidate.priceVerified(),
-                    candidate.color(),
-                    requestedSize,
-                    candidate.availableSizes(),
-                    candidate.sizeVerified(),
-                    candidate.stockText(),
-                    candidate.availabilityVerified(),
-                    candidate.audience(),
-                    candidate.sourceCitation(),
-                    displayOrder++,
-                    now));
+        for (LiveSelectedItem selected : outfit.items()) {
+            RetailProductCandidate candidate = selected.candidate();
+            String requestedSize = sizeResolver.apply(selected);
+            if (selected.requestedItem() != null) {
+                RequestedItem requestedItem = selected.requestedItem();
+                recommendation.addItem(new LiveOutfitItem(
+                        UUID.randomUUID(), requestedItem.id(), requestedItem.originalPhrase(), requestedItem.genericCategory(),
+                        candidate.retailer(), candidate.title(), candidate.brand(), candidate.productUrl(), candidate.imageUrl(),
+                        candidate.price(), candidate.originalPrice(), candidate.currency(), candidate.priceVerified(),
+                        candidate.color(), requestedSize, candidate.availableSizes(), candidate.sizeVerified(),
+                        candidate.stockText(), candidate.availabilityVerified(), candidate.audience(), candidate.sourceCitation(),
+                        displayOrder++, now));
+            } else {
+                recommendation.addItem(new LiveOutfitItem(
+                        UUID.randomUUID(), selected.category(), candidate.retailer(), candidate.title(), candidate.brand(),
+                        candidate.productUrl(), candidate.imageUrl(), candidate.price(), candidate.originalPrice(),
+                        candidate.currency(), candidate.priceVerified(), candidate.color(), requestedSize,
+                        candidate.availableSizes(), candidate.sizeVerified(), candidate.stockText(),
+                        candidate.availabilityVerified(), candidate.audience(), candidate.sourceCitation(),
+                        displayOrder++, now));
+            }
         }
         repository.save(recommendation);
     }
@@ -297,7 +479,7 @@ public class LiveRecommendationService {
         repository.saveAll(active);
     }
 
-    private String buildMessage(LiveRecommendationCompleteness completeness, List<ProductCategory> found, List<ProductCategory> missing) {
+    private String buildCategoryMessage(LiveRecommendationCompleteness completeness, List<ProductCategory> found, List<ProductCategory> missing) {
         return switch (completeness) {
             case COMPLETE -> null;
             case PARTIAL -> "We found items for " + formatCategoryList(found) + ", but no matching "
@@ -308,8 +490,26 @@ public class LiveRecommendationService {
         };
     }
 
+    private String buildItemMessage(LiveRecommendationCompleteness completeness, List<RequestedItem> found, List<RequestedItem> missing) {
+        return switch (completeness) {
+            case COMPLETE -> null;
+            case PARTIAL -> "We found " + formatItemPhraseList(found) + ", but couldn't find a matching Nordstrom "
+                    + "product for " + formatItemPhraseList(missing) + ".";
+            case NO_RESULTS -> "No live Nordstrom products were found for requested item"
+                    + (missing.size() == 1 ? ": " : "s: ") + formatItemPhraseList(missing) + ".";
+            case PROVIDER_UNAVAILABLE -> "Live Nordstrom search is temporarily unavailable. Please try again shortly.";
+        };
+    }
+
     private String formatCategoryList(List<ProductCategory> categories) {
-        List<String> labels = categories.stream().map(this::formatCategoryLabel).toList();
+        return joinLabels(categories.stream().map(this::formatCategoryLabel).toList());
+    }
+
+    private String formatItemPhraseList(List<RequestedItem> items) {
+        return joinLabels(items.stream().map(RequestedItem::originalPhrase).toList());
+    }
+
+    private String joinLabels(List<String> labels) {
         if (labels.size() == 1) {
             return labels.get(0);
         }
@@ -325,8 +525,10 @@ public class LiveRecommendationService {
     }
 
     private String buildExplanation(LiveAssembledOutfit outfit) {
-        String categories = outfit.items().stream().map(item -> item.category().name()).collect(Collectors.joining(", "));
-        return "Includes " + outfit.items().size() + " live nordstrom.com product(s) (" + categories + ").";
+        String labels = outfit.items().stream()
+                .map(item -> item.requestedItem() != null ? item.requestedItem().originalPhrase() : item.category().name())
+                .collect(Collectors.joining(", "));
+        return "Includes " + outfit.items().size() + " live nordstrom.com product(s) (" + labels + ").";
     }
 
     private LiveRecommendationsResponse buildResponse(UUID eventId) {
@@ -351,7 +553,9 @@ public class LiveRecommendationService {
 
         return new LiveRecommendationsResponse(
                 eventId, generation, summary.getGeneratedAt(), summary.getCompleteness(),
-                summary.getFoundCategories(), summary.getMissingCategories(), summary.getMessage(), recommendations);
+                summary.getFoundCategories(), summary.getMissingCategories(),
+                summary.getFoundRequestedItems(), summary.getMissingRequestedItems(),
+                summary.getMessage(), recommendations);
     }
 
     private LiveOutfitRecommendationResponse toResponse(LiveOutfitRecommendation recommendation) {
@@ -389,6 +593,8 @@ public class LiveRecommendationService {
                 item.getStockText(),
                 item.isAvailabilityVerified(),
                 item.getAudience(),
+                item.getRequestedItemPhrase(),
+                item.getRequestedItemGenericCategory(),
                 item.getSourceCitation(),
                 item.getDisplayOrder());
     }

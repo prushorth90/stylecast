@@ -140,6 +140,21 @@ export function EventOccasionCard({ eventId, interpretation, isLoading, isError 
                 )}
               </Stack>
 
+              {(current.requestedItems ?? []).length > 0 && (
+                <Stack spacing={0.5}>
+                  <Typography variant="body2" color="text.secondary">
+                    Requested items
+                  </Typography>
+                  <Stack component="ul" sx={{ m: 0, pl: 2.5 }}>
+                    {current.requestedItems.map((item) => (
+                      <Typography key={item.id} component="li" variant="body2">
+                        {item.originalPhrase}
+                      </Typography>
+                    ))}
+                  </Stack>
+                </Stack>
+              )}
+
               <Stack spacing={0.5}>
                 <Typography variant="body2" color="text.secondary">
                   Optional categories

@@ -222,6 +222,84 @@ class EventControllerTest {
         assertThat(response.getBody().fieldErrors()).isNull();
     }
 
+    @Test
+    void updateEvent_forExistingEvent_updatesFieldsAndKeepsSameId() {
+        Event event = eventRepository.save(sampleEvent(
+                "Draft title", OffsetDateTime.now().plusDays(1), OffsetDateTime.now().plusDays(1).plusHours(1)));
+
+        OffsetDateTime newStart = OffsetDateTime.now().plusDays(2);
+        Map<String, Object> body = new java.util.HashMap<>(validRequestBody());
+        body.put("title", "Updated title");
+        body.put("startTime", newStart.toString());
+        body.put("endTime", newStart.plusHours(2).toString());
+
+        ResponseEntity<EventResponseBody> response = restTemplate.exchange(
+                url("/api/events/" + event.getId()),
+                org.springframework.http.HttpMethod.PUT,
+                jsonRequest(body),
+                EventResponseBody.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().id()).isEqualTo(event.getId());
+        assertThat(response.getBody().title()).isEqualTo("Updated title");
+
+        assertThat(eventRepository.findAll()).hasSize(1);
+        assertThat(eventRepository.findById(event.getId())).isPresent();
+        assertThat(eventRepository.findById(event.getId()).get().getTitle()).isEqualTo("Updated title");
+    }
+
+    @Test
+    void updateEvent_calledRepeatedly_neverCreatesADuplicate() {
+        Event event = eventRepository.save(sampleEvent(
+                "Draft title", OffsetDateTime.now().plusDays(1), OffsetDateTime.now().plusDays(1).plusHours(1)));
+
+        for (int i = 0; i < 3; i++) {
+            Map<String, Object> body = new java.util.HashMap<>(validRequestBody());
+            body.put("title", "Edit #" + i);
+            restTemplate.exchange(
+                    url("/api/events/" + event.getId()),
+                    org.springframework.http.HttpMethod.PUT,
+                    jsonRequest(body),
+                    EventResponseBody.class);
+        }
+
+        assertThat(eventRepository.findAll()).hasSize(1);
+        assertThat(eventRepository.findById(event.getId()).get().getTitle()).isEqualTo("Edit #2");
+    }
+
+    @Test
+    void updateEvent_withUnknownId_returns404() {
+        UUID unknownId = UUID.randomUUID();
+
+        ResponseEntity<ApiError> response = restTemplate.exchange(
+                url("/api/events/" + unknownId),
+                org.springframework.http.HttpMethod.PUT,
+                jsonRequest(validRequestBody()),
+                ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void updateEvent_withEndBeforeStart_returns400() {
+        Event event = eventRepository.save(sampleEvent(
+                "Draft title", OffsetDateTime.now().plusDays(1), OffsetDateTime.now().plusDays(1).plusHours(1)));
+
+        OffsetDateTime start = OffsetDateTime.now().plusDays(1);
+        Map<String, Object> body = new java.util.HashMap<>(validRequestBody());
+        body.put("startTime", start.toString());
+        body.put("endTime", start.minusHours(1).toString());
+
+        ResponseEntity<ApiError> response = restTemplate.exchange(
+                url("/api/events/" + event.getId()),
+                org.springframework.http.HttpMethod.PUT,
+                jsonRequest(body),
+                ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
     private Event sampleEvent(String title, OffsetDateTime start, OffsetDateTime end) {
         return new Event(
                 UUID.randomUUID(),

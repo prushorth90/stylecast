@@ -1,17 +1,23 @@
 package com.stylecast.occasion;
 
 import com.stylecast.catalog.ProductCategory;
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -96,6 +102,11 @@ public class OccasionInterpretation {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @OneToMany(mappedBy = "interpretation", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @OrderBy("displayOrder ASC")
+    @BatchSize(size = 20)
+    private List<OccasionRequestedItem> requestedItems = new ArrayList<>();
+
     protected OccasionInterpretation() {
         // JPA
     }
@@ -126,6 +137,22 @@ public class OccasionInterpretation {
         this.modelName = result.modelName();
         this.generatedAt = now;
         this.updatedAt = now;
+        applyRequestedItems(result.requestedItems(), now);
+    }
+
+    /**
+     * Rebuilds the requested-items child collection from scratch on every
+     * (re)generation - relies on {@code orphanRemoval} to delete rows for
+     * items that no longer apply, exactly like a fresh classification
+     * replaces every other field on this same row.
+     */
+    private void applyRequestedItems(List<RequestedItem> items, Instant now) {
+        this.requestedItems.clear();
+        for (RequestedItem item : items) {
+            OccasionRequestedItem entity = new OccasionRequestedItem(item, now);
+            entity.assignTo(this);
+            this.requestedItems.add(entity);
+        }
     }
 
     private static List<String> toNames(List<? extends Enum<?>> values) {
@@ -174,6 +201,11 @@ public class OccasionInterpretation {
 
     public List<String> getAssumptions() {
         return assumptions;
+    }
+
+    /** Never {@code null}; empty when no explicit product phrases were extracted (or for old rows predating Task 8.5). */
+    public List<RequestedItem> getRequestedItems() {
+        return requestedItems.stream().map(OccasionRequestedItem::toRequestedItem).toList();
     }
 
     public BigDecimal getConfidence() {

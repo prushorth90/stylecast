@@ -103,6 +103,7 @@ function interpretationResponse(overrides: Record<string, unknown> = {}) {
       colorsToAvoid: ['neon green'],
       specialRequirements: ['OUTDOOR_SUITABLE'],
       assumptions: ['Outdoor garden wedding implies cocktail-adjacent formality.'],
+      requestedItems: [],
       confidence: 0.88,
       source: 'AI',
       generatedAt: '2026-07-28T12:00:00Z',
@@ -146,6 +147,7 @@ function preferencesResponse(overrides: Record<string, unknown> = {}) {
       shoppingDepartment: 'MEN',
       createdAt: '2026-07-28T00:00:00Z',
       updatedAt: '2026-07-28T00:00:00Z',
+      interpretationRefreshRecommended: false,
       ...overrides,
     }),
     { status: 200 },
@@ -161,6 +163,8 @@ function recommendationsNotGeneratedResponse() {
       status: 'NO_RESULTS',
       foundCategories: [],
       missingCategories: [],
+      foundRequestedItems: [],
+      missingRequestedItems: [],
       message: 'Recommendations have not been generated yet for this event.',
       recommendations: [],
     }),
@@ -177,6 +181,8 @@ function recommendationsNoResultsResponse() {
       status: 'NO_RESULTS',
       foundCategories: [],
       missingCategories: ['SUIT', 'SHOES'],
+      foundRequestedItems: [],
+      missingRequestedItems: [],
       message: 'No live Nordstrom products were found for required categories: Suit and Shoes.',
       recommendations: [],
     }),
@@ -193,6 +199,8 @@ function liveRecommendationsWithResultsResponse(overrides: Record<string, unknow
       status: 'COMPLETE',
       foundCategories: ['SUIT', 'SHOES'],
       missingCategories: [],
+      foundRequestedItems: [],
+      missingRequestedItems: [],
       message: null,
       recommendations: [
         {
@@ -268,6 +276,8 @@ function liveRecommendationsPartialResponse() {
       status: 'PARTIAL',
       foundCategories: ['SUIT'],
       missingCategories: ['SHOES'],
+      foundRequestedItems: [],
+      missingRequestedItems: [],
       message: 'We found items for Suit, but no matching Shoes.',
       recommendations: [
         {
@@ -320,6 +330,8 @@ function liveRecommendationsWithVerifiedResultsResponse() {
       status: 'COMPLETE',
       foundCategories: ['SUIT'],
       missingCategories: [],
+      foundRequestedItems: [],
+      missingRequestedItems: [],
       message: null,
       recommendations: [
         {
@@ -372,6 +384,8 @@ function liveSearchProviderUnavailableResponse() {
       status: 'PROVIDER_UNAVAILABLE',
       foundCategories: [],
       missingCategories: ['SUIT', 'SHOES'],
+      foundRequestedItems: [],
+      missingRequestedItems: [],
       message: 'Live Nordstrom search is temporarily unavailable. Please try again shortly.',
       recommendations: [],
     }),
@@ -424,23 +438,6 @@ function renderPage() {
   );
 }
 
-function labelMatcher(label: string): RegExp {
-  return new RegExp(`^${label}`);
-}
-
-async function selectOption(user: ReturnType<typeof userEvent.setup>, label: string, option: string) {
-  await user.click(screen.getByLabelText(labelMatcher(label)));
-  await user.click(await screen.findByText(option));
-}
-
-async function fillRequiredFields(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByLabelText(labelMatcher('Outfit request')), 'A navy suit and tie.');
-  await user.type(screen.getByLabelText(labelMatcher('Maximum budget')), '500');
-  await selectOption(user, 'Clothing size', 'M');
-  await selectOption(user, 'Shoe size', '10');
-  await selectOption(user, 'Preferred style', 'Classic');
-}
-
 describe('EventStylePage', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
@@ -471,16 +468,19 @@ describe('EventStylePage', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Event not found'));
   });
 
-  it('shows a blank form when the event has no saved preferences yet', async () => {
+  it('shows an "Edit preferences" action that opens the event setup modal on Step 2', async () => {
     vi.mocked(fetch).mockImplementation((input) => defaultFetchRouter(input));
 
+    const user = userEvent.setup();
     renderPage();
 
-    expect(await screen.findByLabelText(labelMatcher('Outfit request'))).toHaveValue('');
-    expect(screen.getByLabelText(labelMatcher('Maximum budget'))).toHaveValue(null);
+    await screen.findByText(/Birthday party/);
+    await user.click(screen.getByText('Edit preferences'));
+
+    expect(await screen.findByText('Styling preferences')).toBeInTheDocument();
   });
 
-  it('populates the form with existing preferences', async () => {
+  it('populates the edit-preferences modal with existing saved preferences', async () => {
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
       if (url.includes('/interpretation')) {
@@ -495,96 +495,46 @@ describe('EventStylePage', () => {
       return Promise.resolve(eventResponse());
     });
 
+    const user = userEvent.setup();
     renderPage();
 
-    expect(await screen.findByLabelText(labelMatcher('Outfit request'))).toHaveValue(
+    await user.click(await screen.findByText('Edit preferences'));
+
+    expect(await screen.findByLabelText(/^Outfit request/)).toHaveValue(
       'I want a navy suit and tie, but not too formal.',
     );
-    expect(screen.getByLabelText(labelMatcher('Maximum budget'))).toHaveValue(500);
-    expect(screen.getByLabelText(labelMatcher('Preferred colors'))).toHaveValue('navy, cream');
-    expect(screen.getByLabelText(labelMatcher('Colors to avoid'))).toHaveValue('bright red');
+    expect(screen.getByLabelText(/^Maximum budget/)).toHaveValue(500);
   });
 
-  it('shows validation errors when required fields are missing', async () => {
+  it('the full styling-preferences form no longer appears directly on the results page', async () => {
     vi.mocked(fetch).mockImplementation((input) => defaultFetchRouter(input));
 
-    const user = userEvent.setup();
     renderPage();
 
-    await screen.findByLabelText(labelMatcher('Outfit request'));
-    await user.click(screen.getByText('Save Preferences'));
-
-    expect(await screen.findByText('Outfit request is required.')).toBeInTheDocument();
-    expect(screen.getByText('Maximum budget is required.')).toBeInTheDocument();
-    expect(screen.getByText('Clothing size is required.')).toBeInTheDocument();
-    expect(screen.getByText('Shoe size is required.')).toBeInTheDocument();
-    expect(screen.getByText('Preferred style is required.')).toBeInTheDocument();
-    expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining('/preferences'), expect.anything());
+    await screen.findByText(/Birthday party/);
+    expect(screen.queryByLabelText(/^Outfit request/)).not.toBeInTheDocument();
   });
 
-  it('shows a validation error for a zero or negative budget', async () => {
-    vi.mocked(fetch).mockImplementation((input) => defaultFetchRouter(input));
-
-    const user = userEvent.setup();
-    renderPage();
-
-    await screen.findByLabelText(labelMatcher('Outfit request'));
-    await user.type(screen.getByLabelText(labelMatcher('Outfit request')), 'A navy suit and tie.');
-    await user.type(screen.getByLabelText(labelMatcher('Maximum budget')), '0');
-    await selectOption(user, 'Clothing size', 'M');
-    await selectOption(user, 'Shoe size', '10');
-    await selectOption(user, 'Preferred style', 'Classic');
-
-    await user.click(screen.getByText('Save Preferences'));
-
-    expect(await screen.findByText('Must be greater than zero.')).toBeInTheDocument();
-  });
-
-  it('saves preferences for the first time and shows a success message', async () => {
+  it('never triggers a live Nordstrom search when saving preferences from the edit modal', async () => {
     vi.mocked(fetch).mockImplementation((input, init) => {
       const url = input.toString();
+      if (url.includes('/interpretation/regenerate')) {
+        return Promise.resolve(interpretationResponse());
+      }
       if (url.includes('/interpretation')) {
         return Promise.resolve(interpretationResponse());
       }
       if (url.includes('/weather')) {
         return Promise.resolve(weatherAvailableResponse());
       }
-      if (url.includes('/preferences') && init?.method === 'PUT') {
-        return Promise.resolve(preferencesResponse());
+      if (url.includes('/recommendations/live/invalidate-stale')) {
+        return Promise.resolve(new Response(null, { status: 204 }));
       }
-      if (url.includes('/preferences')) {
-        return Promise.resolve(notFoundResponse());
-      }
-      return Promise.resolve(eventResponse());
-    });
-
-    const user = userEvent.setup();
-    renderPage();
-
-    await screen.findByLabelText(labelMatcher('Outfit request'));
-    await fillRequiredFields(user);
-    await user.click(screen.getByText('Save Preferences'));
-
-    expect(await screen.findByText('Preferences saved.')).toBeInTheDocument();
-    expect(fetch).toHaveBeenCalledWith(
-      expect.stringContaining(`/api/events/${EVENT_ID}/preferences`),
-      expect.objectContaining({ method: 'PUT' }),
-    );
-  });
-
-  it('updates existing preferences and reflects the new value after saving', async () => {
-    let putCallCount = 0;
-    vi.mocked(fetch).mockImplementation((input, init) => {
-      const url = input.toString();
-      if (url.includes('/interpretation')) {
-        return Promise.resolve(interpretationResponse());
-      }
-      if (url.includes('/weather')) {
-        return Promise.resolve(weatherAvailableResponse());
+      if (url.includes('/recommendations')) {
+        return Promise.resolve(recommendationsNotGeneratedResponse());
       }
       if (url.includes('/preferences') && init?.method === 'PUT') {
-        putCallCount += 1;
-        return Promise.resolve(preferencesResponse({ maxBudget: 650 }));
+        return Promise.resolve(preferencesResponse({ interpretationRefreshRecommended: true }));
       }
       if (url.includes('/preferences')) {
         return Promise.resolve(preferencesResponse());
@@ -595,18 +545,20 @@ describe('EventStylePage', () => {
     const user = userEvent.setup();
     renderPage();
 
-    const budgetField = await screen.findByLabelText(labelMatcher('Maximum budget'));
-    expect(budgetField).toHaveValue(500);
+    await user.click(await screen.findByText('Edit preferences'));
+    // Existing preferences (from preferencesResponse()) already populate every
+    // required field - only change the outfit request text before submitting.
+    const outfitField = await screen.findByLabelText(/^Outfit request/);
+    await user.clear(outfitField);
+    await user.type(outfitField, 'A different navy suit and tie.');
 
-    await user.clear(budgetField);
-    await user.type(budgetField, '650');
-    await user.click(screen.getByText('Save Preferences'));
+    await user.click(screen.getByText('Save and view recommendations'));
 
-    await waitFor(() =>
-      expect(screen.getByLabelText(labelMatcher('Maximum budget'))).toHaveValue(650),
+    await waitFor(() => expect(screen.queryByText('Styling preferences')).not.toBeInTheDocument());
+    expect(fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/recommendations/live/generate'),
+      expect.anything(),
     );
-    expect(await screen.findByText('Preferences saved.')).toBeInTheDocument();
-    expect(putCallCount).toBe(1);
   });
 
   it('shows a loading state for weather while it is being fetched', async () => {
@@ -685,9 +637,9 @@ describe('EventStylePage', () => {
     renderPage();
 
     expect(await screen.findByText('Unable to load weather.')).toBeInTheDocument();
-    // The rest of the page (event details, preferences form) must still work.
+    // The rest of the page (event details, edit-preferences action) must still work.
     expect(screen.getByText(/Birthday party/)).toBeInTheDocument();
-    expect(await screen.findByLabelText(labelMatcher('Outfit request'))).toBeInTheDocument();
+    expect(await screen.findByText('Edit preferences')).toBeInTheDocument();
   });
 
   it('shows a provider-error state when refreshing weather fails, without breaking the rest of the page', async () => {
@@ -958,10 +910,10 @@ describe('EventStylePage', () => {
     renderPage();
 
     expect(await screen.findByText(/Unable to load the occasion interpretation/)).toBeInTheDocument();
-    // The rest of the page (event details, weather, preferences form) must still work.
+    // The rest of the page (event details, weather, edit-preferences action) must still work.
     expect(screen.getByText(/Birthday party/)).toBeInTheDocument();
     expect(await screen.findByText('Partly cloudy')).toBeInTheDocument();
-    expect(await screen.findByLabelText(labelMatcher('Outfit request'))).toBeInTheDocument();
+    expect(await screen.findByText('Edit preferences')).toBeInTheDocument();
   });
 
   // --- Live outfit recommendations (Task 8) -----------------------------------
@@ -1301,6 +1253,202 @@ describe('EventStylePage', () => {
     await user.click(await screen.findByText('Generate Live Nordstrom Looks'));
 
     expect(await screen.findByText(/styling preferences have not been saved yet/)).toBeInTheDocument();
+  });
+
+  // --- Explicit requested items (Task 8.5) -------------------------------------
+
+  it('shows explicit requested items using their original phrases, not raw enum values', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(
+          interpretationResponse({
+            requestedItems: [
+              {
+                id: 'item-1',
+                originalPhrase: 'USA soccer jersey',
+                genericCategory: 'TOP',
+                searchTerms: ['USA soccer jersey'],
+                required: true,
+                activityContext: 'soccer',
+                displayOrder: 0,
+              },
+              {
+                id: 'item-2',
+                originalPhrase: 'soccer shorts',
+                genericCategory: 'BOTTOM',
+                searchTerms: ['soccer shorts'],
+                required: true,
+                activityContext: 'soccer',
+                displayOrder: 1,
+              },
+              {
+                id: 'item-3',
+                originalPhrase: 'football boots',
+                genericCategory: 'FOOTWEAR',
+                searchTerms: ['football boots', 'soccer cleats'],
+                required: true,
+                activityContext: 'soccer',
+                displayOrder: 2,
+              },
+            ],
+          }),
+        );
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return Promise.resolve(recommendationsNotGeneratedResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Requested items')).toBeInTheDocument();
+    expect(screen.getByText('USA soccer jersey')).toBeInTheDocument();
+    expect(screen.getByText('soccer shorts')).toBeInTheDocument();
+    expect(screen.getByText('football boots')).toBeInTheDocument();
+    // Never expose only the raw generic category enum value on its own.
+    expect(screen.queryByText('TOP')).not.toBeInTheDocument();
+    expect(screen.queryByText('FOOTWEAR')).not.toBeInTheDocument();
+  });
+
+  it('does not show a requested-items section for an interpretation with no explicit items (backward compatible)', async () => {
+    vi.mocked(fetch).mockImplementation((input) => defaultFetchRouter(input));
+
+    renderPage();
+
+    await screen.findByText('8 / 10');
+    expect(screen.queryByText('Requested items')).not.toBeInTheDocument();
+  });
+
+  function liveRecommendationsPartialWithRequestedItemsResponse() {
+    return new Response(
+      JSON.stringify({
+        eventId: EVENT_ID,
+        generation: 1,
+        generatedAt: '2026-07-28T12:00:00Z',
+        status: 'PARTIAL',
+        foundCategories: [],
+        missingCategories: [],
+        foundRequestedItems: [
+          { id: 'item-1', originalPhrase: 'USA soccer jersey', genericCategory: 'TOP', activityContext: 'soccer' },
+          { id: 'item-2', originalPhrase: 'soccer shorts', genericCategory: 'BOTTOM', activityContext: 'soccer' },
+        ],
+        missingRequestedItems: [
+          { id: 'item-3', originalPhrase: 'football boots', genericCategory: 'FOOTWEAR', activityContext: 'soccer' },
+        ],
+        message:
+          "We found USA soccer jersey and soccer shorts, but couldn't find a matching Nordstrom product for football boots.",
+        recommendations: [
+          {
+            id: '55555555-5555-5555-5555-555555555555',
+            eventId: EVENT_ID,
+            generation: 1,
+            rank: 1,
+            name: 'Live Look 1',
+            status: 'ACTIVE',
+            source: 'LIVE_NORDSTROM',
+            explanation: 'Includes 2 live nordstrom.com product(s) (USA soccer jersey, soccer shorts).',
+            generatedAt: '2026-07-28T12:00:00Z',
+            items: [
+              {
+                id: 'outfit-item-1',
+                category: null,
+                retailer: 'NORDSTROM',
+                title: 'USA Soccer Jersey',
+                brand: null,
+                productUrl: 'https://www.nordstrom.com/s/usa-soccer-jersey/1111111',
+                imageUrl: null,
+                price: null,
+                originalPrice: null,
+                currency: null,
+                priceVerified: false,
+                color: null,
+                requestedSize: 'M',
+                availableSizes: [],
+                sizeVerified: false,
+                stockText: null,
+                availabilityVerified: false,
+                audience: 'UNKNOWN',
+                requestedItemPhrase: 'USA soccer jersey',
+                requestedItemGenericCategory: 'TOP',
+                sourceCitation: 'OpenAI web_search url_citation',
+                displayOrder: 0,
+              },
+              {
+                id: 'outfit-item-2',
+                category: null,
+                retailer: 'NORDSTROM',
+                title: 'Soccer Shorts',
+                brand: null,
+                productUrl: 'https://www.nordstrom.com/s/soccer-shorts/2222222',
+                imageUrl: null,
+                price: null,
+                originalPrice: null,
+                currency: null,
+                priceVerified: false,
+                color: null,
+                requestedSize: 'M',
+                availableSizes: [],
+                sizeVerified: false,
+                stockText: null,
+                availabilityVerified: false,
+                audience: 'UNKNOWN',
+                requestedItemPhrase: 'soccer shorts',
+                requestedItemGenericCategory: 'BOTTOM',
+                sourceCitation: 'OpenAI web_search url_citation',
+                displayOrder: 1,
+              },
+            ],
+          },
+        ],
+      }),
+      { status: 200 },
+    );
+  }
+
+  it('shows found requested items with Nordstrom links and missing ones distinctly, never labeling a partial result complete', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return Promise.resolve(liveRecommendationsPartialWithRequestedItemsResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Found')).toBeInTheDocument();
+    expect(screen.getByText('Missing')).toBeInTheDocument();
+    expect(screen.getByText(/USA soccer jersey/, { selector: 'li' })).toBeInTheDocument();
+    expect(screen.getByText(/soccer shorts/, { selector: 'li' })).toBeInTheDocument();
+    expect(screen.getByText(/football boots/, { selector: 'li' })).toBeInTheDocument();
+    expect(screen.getByText(/No matching Nordstrom product found/, { selector: 'li' })).toBeInTheDocument();
+
+    // The found item's link points at its real Nordstrom product page.
+    const nordstromLinks = screen.getAllByText('View on Nordstrom');
+    const jerseyLink = nordstromLinks.find(
+      (el) => el.closest('a')?.getAttribute('href') === 'https://www.nordstrom.com/s/usa-soccer-jersey/1111111',
+    );
+    expect(jerseyLink).toBeTruthy();
+
+    // A partial result is clearly marked "Partial" - never presented as a complete outfit.
+    expect(screen.getByText('Partial')).toBeInTheDocument();
   });
 });
 

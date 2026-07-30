@@ -127,4 +127,74 @@ class OccasionInterpretationValidatorTest {
         assertThatThrownBy(() -> OccasionInterpretationValidator.validate(MAPPER.readTree("[1,2,3]"), "gpt-4.1"))
                 .isInstanceOf(OccasionClassificationException.class);
     }
+
+    @Test
+    void validate_withValidJson_requestedItemsDefaultsToEmptyWhenFieldAbsent() {
+        OccasionClassificationResult result =
+                OccasionInterpretationValidator.validate(MAPPER.readTree(VALID_JSON), "gpt-4.1");
+
+        assertThat(result.requestedItems()).isEmpty();
+    }
+
+    private static final String JSON_WITH_REQUESTED_ITEMS = VALID_JSON.replace(
+            "\"confidence\": 0.87",
+            """
+            "requestedItems": [
+              {
+                "originalPhrase": "USA soccer jersey",
+                "genericCategory": "TOP",
+                "searchTerms": ["USA soccer jersey", "soccer jersey"],
+                "required": true,
+                "activityContext": "soccer"
+              },
+              {
+                "originalPhrase": "football boots",
+                "genericCategory": "FOOTWEAR",
+                "searchTerms": ["football boots", "soccer cleats"],
+                "required": true,
+                "activityContext": "soccer"
+              }
+            ],
+            "confidence": 0.87""");
+
+    @Test
+    void validate_withRequestedItems_parsesEveryFieldForEachItem() {
+        OccasionClassificationResult result =
+                OccasionInterpretationValidator.validate(MAPPER.readTree(JSON_WITH_REQUESTED_ITEMS), "gpt-4.1");
+
+        assertThat(result.requestedItems()).hasSize(2);
+        RequestedItem jersey = result.requestedItems().get(0);
+        assertThat(jersey.originalPhrase()).isEqualTo("USA soccer jersey");
+        assertThat(jersey.genericCategory()).isEqualTo(GenericItemCategory.TOP);
+        assertThat(jersey.searchTerms()).contains("USA soccer jersey", "soccer jersey");
+        assertThat(jersey.required()).isTrue();
+        assertThat(jersey.activityContext()).isEqualTo("soccer");
+
+        RequestedItem boots = result.requestedItems().get(1);
+        assertThat(boots.originalPhrase()).isEqualTo("football boots");
+        assertThat(boots.genericCategory()).isEqualTo(GenericItemCategory.FOOTWEAR);
+        assertThat(boots.searchTerms()).contains("soccer cleats");
+    }
+
+    @Test
+    void validate_withUnknownRequestedItemGenericCategory_throws() {
+        String json = JSON_WITH_REQUESTED_ITEMS.replace("\"genericCategory\": \"TOP\"", "\"genericCategory\": \"JERSEY_TOP\"");
+
+        assertThatThrownBy(() -> OccasionInterpretationValidator.validate(MAPPER.readTree(json), "gpt-4.1"))
+                .isInstanceOf(OccasionClassificationException.class)
+                .hasMessageContaining("genericCategory");
+    }
+
+    @Test
+    void validate_withBlankOriginalPhraseInOneRequestedItem_skipsOnlyThatItem() {
+        String json = JSON_WITH_REQUESTED_ITEMS.replace(
+                "\"originalPhrase\": \"football boots\"", "\"originalPhrase\": \"\"");
+
+        OccasionClassificationResult result =
+                OccasionInterpretationValidator.validate(MAPPER.readTree(json), "gpt-4.1");
+
+        assertThat(result.requestedItems()).hasSize(1);
+        assertThat(result.requestedItems().get(0).originalPhrase()).isEqualTo("USA soccer jersey");
+    }
 }
+

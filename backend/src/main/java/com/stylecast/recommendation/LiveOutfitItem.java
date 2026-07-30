@@ -1,6 +1,7 @@
 package com.stylecast.recommendation;
 
 import com.stylecast.catalog.ProductCategory;
+import com.stylecast.occasion.GenericItemCategory;
 import com.stylecast.retail.CandidateAudience;
 import com.stylecast.retail.Retailer;
 import jakarta.persistence.Column;
@@ -30,6 +31,11 @@ import java.util.UUID;
  * {@code false}, unless a {@code ProductDetailEnricher} independently
  * confirms them. Nothing here is ever invented to fill a gap; see Task 8's
  * "no silent fallback" requirement.
+ *
+ * <p>Exactly one of {@code category} (legacy required-categories pipeline)
+ * or {@code requestedItemPhrase}/{@code requestedItemGenericCategory}
+ * (explicit-item pipeline, Task 8.5) is populated, depending on which
+ * pipeline produced this item - see {@code LiveRecommendationService}.
  */
 @Entity
 @Table(name = "live_outfit_items")
@@ -43,8 +49,18 @@ public class LiveOutfitItem {
     private LiveOutfitRecommendation recommendation;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 20)
+    @Column(length = 20)
     private ProductCategory category;
+
+    @Column(name = "requested_item_id")
+    private UUID requestedItemId;
+
+    @Column(name = "requested_item_phrase", length = 200)
+    private String requestedItemPhrase;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "requested_item_generic_category", length = 20)
+    private GenericItemCategory requestedItemGenericCategory;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -109,14 +125,44 @@ public class LiveOutfitItem {
         // JPA
     }
 
+    /** Legacy required-categories pipeline constructor - {@code requestedItemId}/{@code requestedItemPhrase}/{@code requestedItemGenericCategory} stay {@code null}. */
     public LiveOutfitItem(
             UUID id, ProductCategory category, Retailer retailer, String title, String brand, String productUrl,
             String imageUrl, BigDecimal price, BigDecimal originalPrice, String currency, boolean priceVerified,
             String color, String requestedSize, List<String> availableSizes, boolean sizeVerified, String stockText,
             boolean availabilityVerified, CandidateAudience audience, String sourceCitation, int displayOrder,
             Instant createdAt) {
+        this(id, category, null, null, null, retailer, title, brand, productUrl, imageUrl, price, originalPrice,
+                currency, priceVerified, color, requestedSize, availableSizes, sizeVerified, stockText,
+                availabilityVerified, audience, sourceCitation, displayOrder, createdAt);
+    }
+
+    /** Explicit-item pipeline constructor (Task 8.5) - {@code category} stays {@code null}. */
+    public LiveOutfitItem(
+            UUID id, UUID requestedItemId, String requestedItemPhrase, GenericItemCategory requestedItemGenericCategory,
+            Retailer retailer, String title, String brand, String productUrl,
+            String imageUrl, BigDecimal price, BigDecimal originalPrice, String currency, boolean priceVerified,
+            String color, String requestedSize, List<String> availableSizes, boolean sizeVerified, String stockText,
+            boolean availabilityVerified, CandidateAudience audience, String sourceCitation, int displayOrder,
+            Instant createdAt) {
+        this(id, null, requestedItemId, requestedItemPhrase, requestedItemGenericCategory, retailer, title, brand,
+                productUrl, imageUrl, price, originalPrice, currency, priceVerified, color, requestedSize,
+                availableSizes, sizeVerified, stockText, availabilityVerified, audience, sourceCitation, displayOrder,
+                createdAt);
+    }
+
+    private LiveOutfitItem(
+            UUID id, ProductCategory category, UUID requestedItemId, String requestedItemPhrase,
+            GenericItemCategory requestedItemGenericCategory, Retailer retailer, String title, String brand,
+            String productUrl, String imageUrl, BigDecimal price, BigDecimal originalPrice, String currency,
+            boolean priceVerified, String color, String requestedSize, List<String> availableSizes,
+            boolean sizeVerified, String stockText, boolean availabilityVerified, CandidateAudience audience,
+            String sourceCitation, int displayOrder, Instant createdAt) {
         this.id = id;
         this.category = category;
+        this.requestedItemId = requestedItemId;
+        this.requestedItemPhrase = requestedItemPhrase;
+        this.requestedItemGenericCategory = requestedItemGenericCategory;
         this.retailer = retailer;
         this.title = title;
         this.brand = brand;
@@ -152,6 +198,18 @@ public class LiveOutfitItem {
 
     public ProductCategory getCategory() {
         return category;
+    }
+
+    public UUID getRequestedItemId() {
+        return requestedItemId;
+    }
+
+    public String getRequestedItemPhrase() {
+        return requestedItemPhrase;
+    }
+
+    public GenericItemCategory getRequestedItemGenericCategory() {
+        return requestedItemGenericCategory;
     }
 
     public Retailer getRetailer() {

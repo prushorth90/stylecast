@@ -9,7 +9,12 @@ import Link from '@mui/material/Link';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import { EventApiError } from '../../api/eventsApi';
-import type { LiveOutfitItem, LiveOutfitRecommendation, LiveRecommendationsResponse } from '../../api/liveRecommendationsApi';
+import type {
+  LiveOutfitItem,
+  LiveOutfitRecommendation,
+  LiveRecommendationsResponse,
+  RequestedItemSummary,
+} from '../../api/liveRecommendationsApi';
 import {
   useGenerateLiveEventRecommendations,
   useRetryMissingLiveEventRecommendations,
@@ -56,6 +61,25 @@ function formatAvailability(item: LiveOutfitItem): string | null {
   return item.stockText;
 }
 
+/** The user's own phrase (Task 8.5) always takes priority over a formatted category label - never expose only the raw generic/category enum value. */
+function itemContextLabel(item: LiveOutfitItem): string | null {
+  if (item.requestedItemPhrase) {
+    return item.requestedItemPhrase;
+  }
+  return item.category ? formatEnumLabel(item.category) : null;
+}
+
+/** Finds the Nordstrom product URL fulfilling a found requested item, so the "Found" list can link directly to it. */
+function findFoundItemUrl(outfits: LiveOutfitRecommendation[], phrase: string): string | null {
+  for (const outfit of outfits) {
+    const match = outfit.items.find((item) => item.requestedItemPhrase === phrase);
+    if (match) {
+      return match.productUrl;
+    }
+  }
+  return null;
+}
+
 function isProviderUnavailable(error: unknown): boolean {
   return error instanceof EventApiError && error.status === 503;
 }
@@ -85,11 +109,13 @@ function LiveOutfitSummaryCard({ outfit, isPartial }: { outfit: LiveOutfitRecomm
             const sizes = formatSizes(item);
             const availability = formatAvailability(item);
             const hasKnownAudience = item.audience !== 'UNKNOWN';
+            const contextLabel = itemContextLabel(item);
             return (
               <Stack key={item.id} spacing={0.25}>
                 <Typography variant="body2">
                   {item.brand ? `${item.brand} ` : ''}
-                  {item.title ?? 'Nordstrom product'} ({formatEnumLabel(item.category)})
+                  {item.title ?? 'Nordstrom product'}
+                  {contextLabel ? ` (${contextLabel})` : ''}
                 </Typography>
                 <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 0.5, alignItems: 'center' }}>
                   {price && <Chip size="small" variant="outlined" label={price} />}
@@ -139,6 +165,8 @@ export function EventLiveRecommendationsCard({ eventId, recommendations, isLoadi
   const current = generate.data ?? retryMissing.data ?? recommendations;
   const generateDisabled = isLoading || generate.isPending || retryMissing.isPending;
   const outfits = current?.recommendations ?? [];
+  const foundRequestedItems = current?.foundRequestedItems ?? [];
+  const missingRequestedItems = current?.missingRequestedItems ?? [];
   const status = current?.status;
   const isPartial = status === 'PARTIAL';
   const isProviderUnavailableStatus = status === 'PROVIDER_UNAVAILABLE';
@@ -231,6 +259,47 @@ export function EventLiveRecommendationsCard({ eventId, recommendations, isLoadi
             <Alert severity="info" role="alert">
               {current.message}
             </Alert>
+          )}
+
+          {(foundRequestedItems.length > 0 || missingRequestedItems.length > 0) && (
+            <Stack spacing={1.5}>
+              {foundRequestedItems.length > 0 && (
+                <Stack spacing={0.5}>
+                  <Typography variant="subtitle2">Found</Typography>
+                  <Stack component="ul" sx={{ m: 0, pl: 2.5 }}>
+                    {foundRequestedItems.map((item: RequestedItemSummary) => {
+                      const url = findFoundItemUrl(outfits, item.originalPhrase);
+                      return (
+                        <Typography key={item.id} component="li" variant="body2">
+                          {item.originalPhrase}
+                          {url && (
+                            <>
+                              {' — '}
+                              <Link href={url} target="_blank" rel="noopener noreferrer">
+                                View on Nordstrom
+                              </Link>
+                            </>
+                          )}
+                        </Typography>
+                      );
+                    })}
+                  </Stack>
+                </Stack>
+              )}
+
+              {missingRequestedItems.length > 0 && (
+                <Stack spacing={0.5}>
+                  <Typography variant="subtitle2">Missing</Typography>
+                  <Stack component="ul" sx={{ m: 0, pl: 2.5 }}>
+                    {missingRequestedItems.map((item: RequestedItemSummary) => (
+                      <Typography key={item.id} component="li" variant="body2" color="text.secondary">
+                        {item.originalPhrase} — No matching Nordstrom product found
+                      </Typography>
+                    ))}
+                  </Stack>
+                </Stack>
+              )}
+            </Stack>
           )}
 
           {!isPartial && !isProviderUnavailableStatus && !isLoading && !generate.isPending

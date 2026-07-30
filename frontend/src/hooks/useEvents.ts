@@ -3,6 +3,7 @@ import {
   createEvent,
   fetchEventById,
   fetchUpcomingEvents,
+  updateEvent,
   type CreateEventInput,
 } from '../api/eventsApi';
 
@@ -30,6 +31,31 @@ export function useCreateEvent() {
   return useMutation({
     mutationFn: (input: CreateEventInput) => createEvent(input),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+    },
+  });
+}
+
+/**
+ * Updates an already-saved event's details (Step 1 "Continue" when
+ * re-editing rather than creating). Replaces both the single-event cache
+ * entry and invalidates the upcoming-events list so any changed
+ * title/date/location is reflected immediately.
+ */
+export function useUpdateEvent(eventId: string | undefined) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: CreateEventInput) => {
+      if (!eventId) {
+        return Promise.reject(new Error('Missing eventId'));
+      }
+      return updateEvent(eventId, input);
+    },
+    onSuccess: (updated) => {
+      if (eventId) {
+        queryClient.setQueryData(eventQueryKey(eventId), updated);
+      }
       queryClient.invalidateQueries({ queryKey: eventsQueryKey });
     },
   });

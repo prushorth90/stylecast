@@ -9,6 +9,7 @@ import com.stylecast.occasion.dto.OccasionInterpretationResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -58,6 +59,7 @@ public class OccasionInterpretationService {
      * it automatically on first call. Never requires a prior call to
      * {@link #regenerateInterpretation}.
      */
+    @Transactional
     public OccasionInterpretationResponse getInterpretation(UUID eventId) {
         Event event = requireEvent(eventId);
         Optional<OccasionInterpretation> existing = interpretationRepository.findByEventId(eventId);
@@ -72,6 +74,7 @@ public class OccasionInterpretationService {
      * already exists, and overwrites the existing row (same {@code id}, new
      * {@code generatedAt}) rather than inserting a duplicate.
      */
+    @Transactional
     public OccasionInterpretationResponse regenerateInterpretation(UUID eventId) {
         Event event = requireEvent(eventId);
         Optional<OccasionInterpretation> existing = interpretationRepository.findByEventId(eventId);

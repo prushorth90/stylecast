@@ -5,6 +5,7 @@ import com.stylecast.occasion.InterpretationSource;
 import com.stylecast.occasion.InterpretedDressCode;
 import com.stylecast.occasion.OccasionInterpretation;
 import com.stylecast.occasion.OccasionType;
+import com.stylecast.occasion.RequestedItem;
 import com.stylecast.occasion.SpecialRequirement;
 
 import java.math.BigDecimal;
@@ -27,6 +28,7 @@ public record OccasionInterpretationResponse(
         List<String> colorsToAvoid,
         List<SpecialRequirement> specialRequirements,
         List<String> assumptions,
+        List<RequestedItem> requestedItems,
         BigDecimal confidence,
         InterpretationSource source,
         Instant generatedAt,
@@ -46,6 +48,7 @@ public record OccasionInterpretationResponse(
                 interpretation.getColorsToAvoid(),
                 interpretation.getSpecialRequirements(),
                 interpretation.getAssumptions(),
+                interpretation.getRequestedItems(),
                 interpretation.getConfidence(),
                 interpretation.getSource(),
                 interpretation.getGeneratedAt(),

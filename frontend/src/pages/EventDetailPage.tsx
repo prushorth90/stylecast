@@ -4,8 +4,11 @@ import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
-import { Link as RouterLink, useParams } from 'react-router-dom';
+import { useState } from 'react';
+import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
+import { EventSetupModal } from '../components/events/EventSetupModal';
 import { useEvent } from '../hooks/useEvents';
+import { useEventStylePreferences } from '../hooks/useStylePreferences';
 
 function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -22,6 +25,9 @@ function formatDateTime(value: string): string {
 export function EventDetailPage() {
   const { eventId } = useParams<{ eventId: string }>();
   const { data: event, isPending, isError, error } = useEvent(eventId);
+  const { data: preferences, isPending: isPreferencesPending } = useEventStylePreferences(eventId);
+  const [isSetupModalOpen, setIsSetupModalOpen] = useState(false);
+  const navigate = useNavigate();
 
   if (isPending) {
     return (
@@ -43,6 +49,14 @@ export function EventDetailPage() {
         </Button>
       </Stack>
     );
+  }
+
+  function handleStyleThisEvent() {
+    if (preferences) {
+      navigate(`/events/${eventId}/style`);
+    } else {
+      setIsSetupModalOpen(true);
+    }
   }
 
   return (
@@ -69,13 +83,22 @@ export function EventDetailPage() {
       {event.description && <Typography variant="body1">{event.description}</Typography>}
 
       <Button
-        component={RouterLink}
-        to={`/events/${event.id}/style`}
         variant="contained"
         sx={{ alignSelf: 'flex-start' }}
+        onClick={handleStyleThisEvent}
+        disabled={isPreferencesPending}
       >
         Style this event
       </Button>
+
+      <EventSetupModal
+        open={isSetupModalOpen}
+        onClose={() => setIsSetupModalOpen(false)}
+        eventId={event.id}
+        initialEvent={event}
+        initialPreferences={preferences ?? null}
+        onCompleted={(completedEventId) => navigate(`/events/${completedEventId}/style`)}
+      />
     </Stack>
   );
 }

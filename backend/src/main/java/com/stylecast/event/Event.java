@@ -75,6 +75,29 @@ public class Event {
         this.createdAt = createdAt;
     }
 
+    /**
+     * Applies new field values in place (used by the "Continue" action in
+     * the two-step event setup flow when editing a previously saved draft
+     * event rather than creating a new one) - the {@code id}/{@code
+     * createdAt} never change.
+     */
+    public void update(
+            String title,
+            String description,
+            String location,
+            OffsetDateTime startTime,
+            OffsetDateTime endTime,
+            EventSetting setting,
+            String dressCode) {
+        this.title = title;
+        this.description = description;
+        this.location = location;
+        this.startTime = startTime;
+        this.endTime = endTime;
+        this.setting = setting;
+        this.dressCode = dressCode;
+    }
+
     public UUID getId() {
         return id;
     }

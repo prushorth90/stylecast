@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   fetchLiveEventRecommendations,
   generateLiveEventRecommendations,
+  invalidateStaleLiveEventRecommendations,
   retryMissingLiveEventRecommendations,
 } from '../api/liveRecommendationsApi';
 
@@ -61,6 +62,31 @@ export function useRetryMissingLiveEventRecommendations(eventId: string | undefi
     onSuccess: (recommendations) => {
       if (eventId) {
         queryClient.setQueryData(liveEventRecommendationsQueryKey(eventId), recommendations);
+      }
+    },
+  });
+}
+
+/**
+ * Marks the event's current live recommendations as stale after the event
+ * setup modal saved preferences that changed in an interpretation-relevant
+ * way. Never triggers a live search itself; invalidates the cached
+ * recommendations so the next view refetches the (now stale-flagged)
+ * current state.
+ */
+export function useInvalidateStaleLiveEventRecommendations(eventId: string | undefined) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => {
+      if (!eventId) {
+        return Promise.reject(new Error('Missing eventId'));
+      }
+      return invalidateStaleLiveEventRecommendations(eventId);
+    },
+    onSuccess: () => {
+      if (eventId) {
+        queryClient.invalidateQueries({ queryKey: liveEventRecommendationsQueryKey(eventId) });
       }
     },
   });

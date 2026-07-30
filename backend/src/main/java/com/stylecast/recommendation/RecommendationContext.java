@@ -7,6 +7,7 @@ import com.stylecast.event.styling.PreferredStyle;
 import com.stylecast.event.styling.ShoppingDepartment;
 import com.stylecast.occasion.OccasionInterpretation;
 import com.stylecast.occasion.OccasionType;
+import com.stylecast.occasion.RequestedItem;
 import com.stylecast.weather.EventWeatherSnapshot;
 import com.stylecast.weather.WeatherAvailabilityStatus;
 
@@ -103,6 +104,18 @@ public record RecommendationContext(
                 .filter(category -> !required.contains(category))
                 .distinct()
                 .toList();
+    }
+
+    /**
+     * Explicit product phrases extracted from the user's saved outfit
+     * request (Task 8.5) - never {@code null}, empty for events where the
+     * interpretation found no specific product phrases, or for
+     * interpretations generated before Task 8.5 existed. Live-search
+     * generation must prefer these over {@link #requiredCategories()}
+     * whenever non-empty; see {@code LiveRecommendationService}.
+     */
+    public List<RequestedItem> requestedItems() {
+        return interpretation.getRequestedItems();
     }
 
     /**

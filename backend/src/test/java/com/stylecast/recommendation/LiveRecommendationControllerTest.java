@@ -8,9 +8,12 @@ import com.stylecast.event.EventSetting;
 import com.stylecast.event.styling.EventStylePreferences;
 import com.stylecast.event.styling.EventStylePreferencesRepository;
 import com.stylecast.event.styling.PreferredStyle;
+import com.stylecast.event.styling.ShoppingDepartment;
+import com.stylecast.occasion.GenericItemCategory;
 import com.stylecast.occasion.OccasionInterpretation;
 import com.stylecast.occasion.OccasionInterpretationRepository;
 import com.stylecast.occasion.OccasionType;
+import com.stylecast.occasion.RequestedItem;
 import com.stylecast.recommendation.dto.LiveRecommendationsResponse;
 import com.stylecast.retail.CandidateAudience;
 import com.stylecast.retail.RetailProductCandidate;
@@ -19,6 +22,7 @@ import com.stylecast.retail.RetailProductSearchRequest;
 import com.stylecast.retail.RetailProductSearchResult;
 import com.stylecast.retail.RetailProductSource;
 import com.stylecast.retail.Retailer;
+import com.stylecast.retail.TargetAudience;
 import com.stylecast.retail.ProductSearchProviderException;
 import com.stylecast.weather.EventWeatherSnapshotRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -401,6 +405,142 @@ class LiveRecommendationControllerTest {
         assertThat(retryResponse.getBody().generation()).isEqualTo(1);
     }
 
+    // --- Explicit requested items (Task 8.5): take priority over category templates ---
+
+    private void saveInterpretationWithRequestedItems(
+            UUID eventId, OccasionType occasion, int formalityLevel, List<RequestedItem> requestedItems) {
+        OccasionInterpretation interpretation = RecommendationFixtures.interpretation(
+                eventId, occasion, formalityLevel, List.of(), List.of(), List.of(), requestedItems);
+        interpretationRepository.save(interpretation);
+    }
+
+    private RequestedItem requestedItem(String phrase, GenericItemCategory category, String activityContext, int order) {
+        return new RequestedItem(UUID.randomUUID(), phrase, category, List.of(phrase), true, activityContext, order);
+    }
+
+    private RetailProductCandidate namedCandidate(String url, String title) {
+        return new RetailProductCandidate(
+                RetailProductSource.AI_WEB_SEARCH, Retailer.NORDSTROM, title, null, null, null, null,
+                null, url, null, null, null, List.of(), null, false, false, false, CandidateAudience.UNKNOWN,
+                Instant.now(), "fake");
+    }
+
+    @Test
+    void generate_withExplicitRequestedItems_prioritizesThemOverCategoryTemplatesAndNeverSubstitutesMissingOnes() {
+        UUID eventId = createEvent("Sunday Soccer Match");
+        savePreferences(eventId, BigDecimal.valueOf(300));
+        List<RequestedItem> requestedItems = List.of(
+                requestedItem("USA soccer jersey", GenericItemCategory.TOP, "soccer", 0),
+                requestedItem("soccer shorts", GenericItemCategory.BOTTOM, "soccer", 1),
+                requestedItem("football boots", GenericItemCategory.FOOTWEAR, "soccer", 2));
+        saveInterpretationWithRequestedItems(eventId, OccasionType.CASUAL_OUTING, 2, requestedItems);
+
+        fakeProvider.setResultForPhrase("USA soccer jersey", new RetailProductSearchResult(
+                List.of(namedCandidate("https://www.nordstrom.com/s/usa-soccer-jersey/1111111", "USA Soccer Jersey"))));
+        fakeProvider.setResultForPhrase("soccer shorts", new RetailProductSearchResult(
+                List.of(namedCandidate("https://www.nordstrom.com/s/soccer-shorts/2222222", "Soccer Shorts"))));
+        fakeProvider.setResultForPhrase("football boots", new RetailProductSearchResult(List.of()));
+
+        ResponseEntity<LiveRecommendationsResponse> response = generate(eventId);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        LiveRecommendationsResponse body = response.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.status()).isEqualTo(LiveRecommendationCompleteness.PARTIAL);
+
+        // Only the explicit-item pipeline ran - never fell back to a category template search.
+        assertThat(fakeProvider.requestLog()).allSatisfy(r -> assertThat(r.category()).isNull());
+        assertThat(body.foundCategories()).isEmpty();
+        assertThat(body.missingCategories()).isEmpty();
+
+        assertThat(body.foundRequestedItems()).extracting(RequestedItemSummary::originalPhrase)
+                .containsExactlyInAnyOrder("USA soccer jersey", "soccer shorts");
+        assertThat(body.missingRequestedItems()).extracting(RequestedItemSummary::originalPhrase)
+                .containsExactly("football boots");
+        assertThat(body.message()).contains("football boots");
+
+        // The missing item must remain missing - never substituted with an unrelated product.
+        assertThat(body.recommendations()).hasSize(1);
+        assertThat(body.recommendations().get(0).items()).hasSize(2);
+        assertThat(body.recommendations().get(0).items())
+                .extracting(item -> item.requestedItemPhrase())
+                .containsExactlyInAnyOrder("USA soccer jersey", "soccer shorts");
+        assertThat(body.recommendations().get(0).items())
+                .noneMatch(item -> item.title() != null && item.title().toLowerCase().contains("boot"));
+    }
+
+    @Test
+    void generate_withOldInterpretationHavingNoRequestedItems_usesCategoryTemplatePipelineAndLeavesNewFieldsEmpty() {
+        UUID eventId = createEvent("Sarah & Tom's Wedding");
+        savePreferences(eventId, BigDecimal.valueOf(2000));
+        saveInterpretation(eventId, OccasionType.WEDDING, 9, List.of(ProductCategory.SUIT));
+
+        fakeProvider.setResult(ProductCategory.SUIT, new RetailProductSearchResult(
+                List.of(candidate("https://www.nordstrom.com/s/navy-suit/1111111"))));
+        fakeProvider.setResult(ProductCategory.SHOES, new RetailProductSearchResult(
+                List.of(candidate("https://www.nordstrom.com/s/oxford-shoes/2222222"))));
+
+        ResponseEntity<LiveRecommendationsResponse> response = generate(eventId);
+
+        LiveRecommendationsResponse body = response.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.status()).isEqualTo(LiveRecommendationCompleteness.COMPLETE);
+        assertThat(body.foundRequestedItems()).isEmpty();
+        assertThat(body.missingRequestedItems()).isEmpty();
+        assertThat(fakeProvider.requestLog()).allSatisfy(r -> assertThat(r.category()).isNotNull());
+    }
+
+    @Test
+    void retryMissing_withExplicitRequestedItems_onlySearchesThePreviouslyMissingItem() {
+        UUID eventId = createEvent("Sunday Soccer Match");
+        savePreferences(eventId, BigDecimal.valueOf(300));
+        List<RequestedItem> requestedItems = List.of(
+                requestedItem("USA soccer jersey", GenericItemCategory.TOP, "soccer", 0),
+                requestedItem("football boots", GenericItemCategory.FOOTWEAR, "soccer", 1));
+        saveInterpretationWithRequestedItems(eventId, OccasionType.CASUAL_OUTING, 2, requestedItems);
+
+        fakeProvider.setResultForPhrase("USA soccer jersey", new RetailProductSearchResult(
+                List.of(namedCandidate("https://www.nordstrom.com/s/usa-soccer-jersey/1111111", "USA Soccer Jersey"))));
+        fakeProvider.setResultForPhrase("football boots", new RetailProductSearchResult(List.of()));
+        LiveRecommendationsResponse first = generate(eventId).getBody();
+        assertThat(first).isNotNull();
+        assertThat(first.status()).isEqualTo(LiveRecommendationCompleteness.PARTIAL);
+        fakeProvider.resetCallLog();
+
+        fakeProvider.setResultForPhrase("football boots", new RetailProductSearchResult(
+                List.of(namedCandidate("https://www.nordstrom.com/s/football-boots/3333333", "Football Boots"))));
+
+        ResponseEntity<LiveRecommendationsResponse> retryResponse = retryMissing(eventId);
+
+        assertThat(retryResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        LiveRecommendationsResponse body = retryResponse.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.status()).isEqualTo(LiveRecommendationCompleteness.COMPLETE);
+        assertThat(body.recommendations()).hasSize(1);
+        assertThat(body.recommendations().get(0).items()).hasSize(2);
+        // Only the previously-missing item was actually searched again.
+        assertThat(fakeProvider.phraseCallLog()).containsExactly("football boots");
+    }
+
+    @Test
+    void generate_withExplicitRequestedItems_stillEnforcesDepartmentPreference() {
+        UUID eventId = createEvent("Sunday Soccer Match");
+        EventStylePreferences preferences = new EventStylePreferences(UUID.randomUUID(), eventId, Instant.now());
+        preferences.apply("Something stylish", BigDecimal.valueOf(300), "M", "9", PreferredStyle.CLASSIC,
+                List.of("navy"), List.of(), ShoppingDepartment.MEN, Instant.now());
+        preferencesRepository.save(preferences);
+        List<RequestedItem> requestedItems = List.of(
+                requestedItem("USA soccer jersey", GenericItemCategory.TOP, "soccer", 0));
+        saveInterpretationWithRequestedItems(eventId, OccasionType.CASUAL_OUTING, 2, requestedItems);
+
+        fakeProvider.setResultForPhrase("USA soccer jersey", new RetailProductSearchResult(
+                List.of(namedCandidate("https://www.nordstrom.com/s/usa-soccer-jersey/1111111", "USA Soccer Jersey"))));
+
+        generate(eventId);
+
+        assertThat(fakeProvider.requestLog()).allSatisfy(r -> assertThat(r.targetAudience()).isEqualTo(TargetAudience.MEN));
+    }
+
     @TestConfiguration
     static class FakeProviderConfig {
         @Bean
@@ -409,25 +549,40 @@ class LiveRecommendationControllerTest {
             return new FakeRetailProductSearchProvider();
         }
     }
-
     static class FakeRetailProductSearchProvider implements RetailProductSearchProvider {
         private final Map<ProductCategory, RetailProductSearchResult> resultsByCategory = new EnumMap<>(ProductCategory.class);
         private final Map<ProductCategory, RuntimeException> failuresByCategory = new EnumMap<>(ProductCategory.class);
+        private final Map<String, RetailProductSearchResult> resultsByPhrase = new java.util.LinkedHashMap<>();
+        private final Map<String, RuntimeException> failuresByPhrase = new java.util.LinkedHashMap<>();
         private final List<ProductCategory> callLog = new ArrayList<>();
+        private final List<String> phraseCallLog = new ArrayList<>();
+        private final List<RetailProductSearchRequest> requestLog = new ArrayList<>();
         private final AtomicReference<RuntimeException> nextFailure = new AtomicReference<>();
 
         @Override
         public RetailProductSearchResult search(RetailProductSearchRequest request) {
-            callLog.add(request.category());
+            requestLog.add(request);
             RuntimeException globalFailure = nextFailure.get();
             if (globalFailure != null) {
                 throw globalFailure;
             }
-            RuntimeException categoryFailure = failuresByCategory.get(request.category());
-            if (categoryFailure != null) {
-                throw categoryFailure;
+            if (request.category() != null) {
+                callLog.add(request.category());
+                RuntimeException categoryFailure = failuresByCategory.get(request.category());
+                if (categoryFailure != null) {
+                    throw categoryFailure;
+                }
+                return resultsByCategory.getOrDefault(request.category(), new RetailProductSearchResult(List.of()));
             }
-            return resultsByCategory.getOrDefault(request.category(), new RetailProductSearchResult(List.of()));
+            // Item-based request (Task 8.5): RequestedItemSearchRequestFactory always adds
+            // the item's own originalPhrase as the first keyword, so match on that instead.
+            String phraseKey = request.keywords().isEmpty() ? "" : request.keywords().get(0).toLowerCase(java.util.Locale.ROOT);
+            phraseCallLog.add(phraseKey);
+            RuntimeException phraseFailure = failuresByPhrase.get(phraseKey);
+            if (phraseFailure != null) {
+                throw phraseFailure;
+            }
+            return resultsByPhrase.getOrDefault(phraseKey, new RetailProductSearchResult(List.of()));
         }
 
         void setResult(ProductCategory category, RetailProductSearchResult result) {
@@ -438,6 +593,14 @@ class LiveRecommendationControllerTest {
             failuresByCategory.put(category, failure);
         }
 
+        void setResultForPhrase(String phrase, RetailProductSearchResult result) {
+            resultsByPhrase.put(phrase.toLowerCase(java.util.Locale.ROOT), result);
+        }
+
+        void setFailureForPhrase(String phrase, RuntimeException failure) {
+            failuresByPhrase.put(phrase.toLowerCase(java.util.Locale.ROOT), failure);
+        }
+
         void setFailure(RuntimeException failure) {
             nextFailure.set(failure);
         }
@@ -446,14 +609,28 @@ class LiveRecommendationControllerTest {
             return List.copyOf(callLog);
         }
 
+        List<String> phraseCallLog() {
+            return List.copyOf(phraseCallLog);
+        }
+
+        List<RetailProductSearchRequest> requestLog() {
+            return List.copyOf(requestLog);
+        }
+
         void resetCallLog() {
             callLog.clear();
+            phraseCallLog.clear();
+            requestLog.clear();
         }
 
         void reset() {
             resultsByCategory.clear();
             failuresByCategory.clear();
+            resultsByPhrase.clear();
+            failuresByPhrase.clear();
             callLog.clear();
+            phraseCallLog.clear();
+            requestLog.clear();
             nextFailure.set(null);
         }
     }
