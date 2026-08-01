@@ -111,6 +111,38 @@ export interface LiveRecommendationsResponse {
   missingRequestedItems: RequestedItemSummary[];
   message: string | null;
   recommendations: LiveOutfitRecommendation[];
+  /**
+   * `true` when the event's saved styling preferences or occasion
+   * interpretation changed after this generation was produced (Task 9) -
+   * the UI must not present a stale generation as current/up to date; it
+   * should show a distinct warning and prompt the user to regenerate.
+   */
+  stale: boolean;
+}
+
+/**
+ * Lifecycle status of an asynchronous live-recommendation generation job -
+ * see `LiveGenerationJobResponse`. `NOT_STARTED` means no job has ever been
+ * started for the event; `QUEUED`/`PROCESSING` are the only non-terminal
+ * states (keep polling); `COMPLETED`/`PARTIAL`/`FAILED` are terminal.
+ */
+export type LiveGenerationJobStatus = 'NOT_STARTED' | 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'PARTIAL' | 'FAILED';
+
+/**
+ * Current state of one asynchronous generation job - returned by both
+ * starting generation (`POST .../generate`, HTTP 202) and polling
+ * (`GET .../status`). Never carries product data itself - once `status`
+ * reaches a terminal value, fetch the actual result via
+ * `fetchLiveEventRecommendations`.
+ */
+export interface LiveGenerationJobResponse {
+  eventId: string;
+  jobId: string | null;
+  status: LiveGenerationJobStatus;
+  startedAt: string | null;
+  completedAt: string | null;
+  generation: number | null;
+  message: string | null;
 }
 
 async function parseErrorResponse(response: Response): Promise<never> {
@@ -145,14 +177,19 @@ export async function fetchLiveEventRecommendations(eventId: string): Promise<Li
 }
 
 /**
- * Searches every required category (independently) and persists the
- * result as a new generation. Throws an `EventApiError` with `status 409`
- * when the event has no saved styling preferences or occasion
+ * Starts generation in the background and returns immediately (HTTP 202)
+ * with the job's id/status - never blocks on the live OpenAI web-search
+ * calls the backend makes, so this never times out at the frontend/proxy
+ * layer the way the old synchronous endpoint could. Poll
+ * `fetchLiveEventRecommendationJobStatus` until it reaches a terminal
+ * state (`COMPLETED`/`PARTIAL`/`FAILED`), then fetch the result via
+ * `fetchLiveEventRecommendations`. Throws an `EventApiError` with `status
+ * 409` when the event has no saved styling preferences or occasion
  * interpretation yet - callers should surface `error.message` directly.
- * A live-search failure never throws here - it surfaces as
- * `status: 'PROVIDER_UNAVAILABLE'` in the returned response instead.
+ * Returns the already-active job unchanged (never starting a second one)
+ * if one is already running for this event.
  */
-export async function generateLiveEventRecommendations(eventId: string): Promise<LiveRecommendationsResponse> {
+export async function startLiveEventRecommendationGeneration(eventId: string): Promise<LiveGenerationJobResponse> {
   const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/recommendations/live/generate`, {
     method: 'POST',
   });
@@ -161,7 +198,22 @@ export async function generateLiveEventRecommendations(eventId: string): Promise
     return parseErrorResponse(response);
   }
 
-  return (await response.json()) as LiveRecommendationsResponse;
+  return (await response.json()) as LiveGenerationJobResponse;
+}
+
+/**
+ * Fetches the current status of the event's asynchronous generation job -
+ * `status: 'NOT_STARTED'` if no job has ever been started. Intended to be
+ * polled every few seconds while `status` is `QUEUED`/`PROCESSING`.
+ */
+export async function fetchLiveEventRecommendationJobStatus(eventId: string): Promise<LiveGenerationJobResponse> {
+  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/recommendations/live/status`);
+
+  if (!response.ok) {
+    return parseErrorResponse(response);
+  }
+
+  return (await response.json()) as LiveGenerationJobResponse;
 }
 
 /**

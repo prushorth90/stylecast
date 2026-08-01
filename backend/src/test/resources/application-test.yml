@@ -1,0 +1,46 @@
+stylecast:
+  retail-search:
+    # Deliberately blank + unreachable-localhost defaults so any automated
+    # test that forgets to substitute a fake RetailProductSearchProvider
+    # bean fails fast (no API key -> ProductSearchProviderException before
+    # any HTTP call is attempted; localhost:1 -> connection refused even if
+    # it somehow were attempted) instead of silently reaching the real
+    # OpenAI API. Tests that need real HTTP-layer behavior point base-url at
+    # a local com.sun.net.httpserver.HttpServer fake instead (see
+    # OpenAiNordstromProductSearchProviderTest/OpenAiProductDetailEnricherTest).
+    openai-api-key: ""
+    openai-model: test-model
+    base-url: http://localhost:1
+    connect-timeout-ms: 200
+    read-timeout-ms: 200
+    max-result-limit: 25
+    # Live product images are no longer fetched/enriched at all (see
+    # OpenAiProductDetailEnricher's class docs - imageUrl is always null for
+    # live Nordstrom candidates); this stays at 0 in tests simply to keep
+    # enrichment out of the way of tests that don't need it.
+    enrichment-max-candidates: 0
+  occasion-classifier:
+    # Same rationale as retail-search above: blank key + unreachable
+    # localhost base URL, so OccasionInterpretationService's fallback to
+    # RuleBasedOccasionClassifier is guaranteed deterministically - never
+    # dependent on whether the developer's shell happens to export a real
+    # OPENAI_API_KEY.
+    openai-api-key: ""
+    openai-model: test-model
+    base-url: http://localhost:1
+    connect-timeout-ms: 200
+    read-timeout-ms: 200
+  weather:
+    # Open-Meteo requires no API key, so the only external-call risk here is
+    # the base URLs themselves - point both at an unreachable localhost port
+    # by default; tests needing real HTTP-layer behavior override these to a
+    # local HttpServer fake (see OpenMeteoWeatherProviderTest/OpenMeteoGeocodingProviderTest),
+    # and full-context controller tests substitute fake WeatherProvider/
+    # GeocodingProvider beans entirely (see EventWeatherControllerTest).
+    geocoding-base-url: http://localhost:1
+    forecast-base-url: http://localhost:1
+    connect-timeout-ms: 200
+    read-timeout-ms: 200
+    forecast-horizon-days: 16
+    freshness-minutes: 180
+    provider-name: OPEN_METEO

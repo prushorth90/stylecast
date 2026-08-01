@@ -13,6 +13,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -74,7 +75,7 @@ class OpenAiOccasionClassifierTest {
         assertThat(result.occasion()).isEqualTo(OccasionType.WEDDING);
         assertThat(result.dressCode()).isEqualTo(InterpretedDressCode.GARDEN_COCKTAIL);
         assertThat(result.source()).isEqualTo(InterpretationSource.AI);
-        assertThat(result.modelName()).isEqualTo("gpt-4.1");
+        assertThat(result.modelName()).isEqualTo("test-model");
     }
 
     @Test
@@ -209,11 +210,27 @@ class OpenAiOccasionClassifierTest {
         String baseUrl = startSlowFakeServer(2000);
         // Read timeout much shorter than the server's artificial delay above.
         OccasionClassifierProperties shortTimeoutProperties =
-                new OccasionClassifierProperties("test-key", "gpt-4.1", baseUrl, 200, 200);
+                new OccasionClassifierProperties("test-key", "test-model", baseUrl, 200, 200);
         OpenAiOccasionClassifier classifier = classifierWithoutHttp(shortTimeoutProperties);
 
         assertThatThrownBy(() -> classifier.classify(input))
                 .isInstanceOf(OccasionClassificationException.class);
+    }
+
+    @Test
+    void classify_sendsTheConfiguredModel_neverAHardcodedOrSdkDefault() throws IOException {
+        AtomicReference<String> capturedRequestBody = new AtomicReference<>();
+        String baseUrl = startFakeServerCapturingRequestBody(200, """
+                {"status": "completed", "output": []}
+                """, capturedRequestBody);
+        OccasionClassifierProperties properties =
+                new OccasionClassifierProperties("test-key", "custom-configured-model", baseUrl, 2000, 5000);
+
+        assertThatThrownBy(() -> classifierWithoutHttp(properties).classify(input))
+                .isInstanceOf(OccasionClassificationException.class); // empty output -> no valid result, irrelevant here
+
+        JsonNode sentBody = MAPPER.readTree(capturedRequestBody.get());
+        assertThat(sentBody.path("model").asString(null)).isEqualTo("custom-configured-model");
     }
 
     private OccasionClassifierProperties properties(String apiKey) {
@@ -221,13 +238,27 @@ class OpenAiOccasionClassifierTest {
     }
 
     private OccasionClassifierProperties properties(String apiKey, String baseUrl) {
-        return new OccasionClassifierProperties(apiKey, "gpt-4.1", baseUrl, 2000, 5000);
+        return new OccasionClassifierProperties(apiKey, "test-model", baseUrl, 2000, 5000);
     }
 
     private String startFakeServer(int status, String responseBody) throws IOException {
         fakeServer = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
         fakeServer.createContext("/responses", exchange -> {
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        fakeServer.start();
+        return "http://localhost:" + fakeServer.getAddress().getPort();
+    }
+
+    private String startFakeServerCapturingRequestBody(int status, String responseBody, AtomicReference<String> captured) throws IOException {
+        fakeServer = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
+        fakeServer.createContext("/responses", exchange -> {
+            captured.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(status, bytes.length);
             exchange.getResponseBody().write(bytes);

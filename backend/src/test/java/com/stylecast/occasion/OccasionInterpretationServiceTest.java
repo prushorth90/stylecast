@@ -74,7 +74,7 @@ class OccasionInterpretationServiceTest {
                 List.of(),
                 new BigDecimal("0.88"),
                 InterpretationSource.AI,
-                "gpt-4.1");
+                "test-model");
     }
 
     private OccasionClassificationResult fallbackResult() {

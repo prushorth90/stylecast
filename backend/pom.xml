@@ -72,6 +72,14 @@
             <artifactId>spring-boot-webclient</artifactId>
         </dependency>
         <dependency>
+            <!-- Used ONLY by OpenAiProductDetailEnricher's narrowly-scoped product-image
+                 metadata fetch (JSON-LD/og:image/gallery <img> attribute parsing) - never
+                 for bulk crawling, price/inventory extraction, or any other scraping. -->
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.18.3</version>
+        </dependency>
+        <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
@@ -132,6 +140,30 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!--
+                        Force every test JVM fork to use safe, local-only values for
+                        every OpenAI/weather/geocoding base URL and API key,
+                        regardless of what the launching shell/CI environment
+                        happens to have exported (e.g. a real OPENAI_API_KEY sourced
+                        from a local .env file). This is the single, maintainable
+                        choke point that guarantees no automated test can reach a
+                        real external host via environment-variable configuration -
+                        see also com.stylecast.testsupport.NoExternalNetworkGuardConfig
+                        (fails a Spring context immediately if this is ever bypassed)
+                        and src/test/resources/application-test.yml.
+                    -->
+                    <environmentVariables>
+                        <OPENAI_API_KEY></OPENAI_API_KEY>
+                        <OPENAI_API_BASE_URL>http://localhost:1</OPENAI_API_BASE_URL>
+                        <WEATHER_GEOCODING_BASE_URL>http://localhost:1</WEATHER_GEOCODING_BASE_URL>
+                        <WEATHER_FORECAST_BASE_URL>http://localhost:1</WEATHER_FORECAST_BASE_URL>
+                    </environmentVariables>
+                </configuration>
             </plugin>
         </plugins>
     </build>

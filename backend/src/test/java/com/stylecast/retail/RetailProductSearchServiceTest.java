@@ -30,7 +30,7 @@ class RetailProductSearchServiceTest {
     private RetailProductSearchProvider provider;
 
     private final RetailSearchProperties properties =
-            new RetailSearchProperties("test-key", "gpt-4.1", "http://localhost", 1000, 1000, 25, 4);
+            new RetailSearchProperties("test-key", "test-model", "http://localhost", 1000, 1000, 25, 4);
 
     private RetailProductSearchService service() {
         return new RetailProductSearchService(provider, properties);

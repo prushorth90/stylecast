@@ -37,6 +37,12 @@ import java.util.UUID;
  * phrases - the two pairs are mutually exclusive per generation. A missing
  * explicit item is never silently dropped or substituted with an unrelated
  * product; it is always reported here.
+ *
+ * <p>{@code stale} is {@code true} when the event's saved styling
+ * preferences or occasion interpretation changed after this generation was
+ * produced (see {@code POST .../recommendations/live/invalidate-stale}) -
+ * the frontend must not present a stale generation as current/up to date;
+ * it should prompt the user to regenerate instead.
  */
 public record LiveRecommendationsResponse(
         UUID eventId,
@@ -48,11 +54,12 @@ public record LiveRecommendationsResponse(
         List<RequestedItemSummary> foundRequestedItems,
         List<RequestedItemSummary> missingRequestedItems,
         String message,
-        List<LiveOutfitRecommendationResponse> recommendations) {
+        List<LiveOutfitRecommendationResponse> recommendations,
+        boolean stale) {
 
     public static LiveRecommendationsResponse notGeneratedYet(UUID eventId) {
         return new LiveRecommendationsResponse(
                 eventId, 0, null, LiveRecommendationCompleteness.NO_RESULTS, List.of(), List.of(), List.of(), List.of(),
-                "Live recommendations have not been generated yet for this event.", List.of());
+                "Live recommendations have not been generated yet for this event.", List.of(), false);
     }
 }

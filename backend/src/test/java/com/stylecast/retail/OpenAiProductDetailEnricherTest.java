@@ -12,6 +12,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -25,8 +26,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  * OpenAiNordstromProductSearchProviderTest}. HTTP-layer behavior (timeout,
  * error status, malformed body) is tested against a local {@link
  * HttpServer} fake. Neither ever calls a real OpenAI endpoint or
- * nordstrom.com - this class never fetches or parses a Nordstrom page
- * itself (see the class-level docs of {@link OpenAiProductDetailEnricher}).
+ * nordstrom.com.
+ *
+ * <p>Live Nordstrom product images are no longer fetched or enriched at
+ * all (no authorized product feed is available yet - see docs/ROADMAP.md):
+ * {@link #extractDetails_neverPopulatesImageUrlFromAiResponseRegardlessOfWhatItReturns}
+ * and {@link #enrich_makesExactlyOneHttpRequestPerCallNeverASecondRequestForAnImage}
+ * confirm {@code imageUrl} is always {@code null} and that {@link
+ * OpenAiProductDetailEnricher#enrich} never makes more than one outbound
+ * HTTP request.
  */
 class OpenAiProductDetailEnricherTest {
 
@@ -47,13 +55,13 @@ class OpenAiProductDetailEnricherTest {
     }
 
     private RetailSearchProperties properties(String apiKey, String baseUrl) {
-        return new RetailSearchProperties(apiKey, "gpt-4.1", baseUrl, 2000, 5000, 25, 4);
+        return new RetailSearchProperties(apiKey, "test-model", baseUrl, 2000, 5000, 25, 4);
     }
 
     // --- extractDetails: pure response-normalization/validation logic -------
 
     @Test
-    void extractDetails_whenGroundedAndFullyValid_returnsAllFields() {
+    void extractDetails_whenGroundedAndFullyValid_returnsAllFieldsExceptImageUrl() {
         JsonNode response = groundedResponse("""
                 {"brand":"Acme","name":"Verified Navy Suit","price":299.99,"originalPrice":349.99,\
                 "currency":"usd","imageUrl":"https://images.nordstrom.com/suit.jpg","color":"Navy",\
@@ -68,7 +76,9 @@ class OpenAiProductDetailEnricherTest {
         assertThat(details.price()).isEqualByComparingTo("299.99");
         assertThat(details.originalPrice()).isEqualByComparingTo("349.99");
         assertThat(details.currency()).isEqualTo("USD");
-        assertThat(details.imageUrl()).isEqualTo("https://images.nordstrom.com/suit.jpg");
+        // imageUrl is never populated from the AI response, even though this fixture includes one -
+        // live Nordstrom images are no longer enriched at all (see class docs).
+        assertThat(details.imageUrl()).isNull();
         assertThat(details.color()).isEqualTo("Navy");
         assertThat(details.availableSizes()).containsExactly("40R", "42R");
         assertThat(details.stockText()).isEqualTo("In stock");
@@ -217,10 +227,10 @@ class OpenAiProductDetailEnricherTest {
     }
 
     @Test
-    void extractDetails_withNonHttpImageUrl_discardsImageUrl() {
+    void extractDetails_neverPopulatesImageUrlFromAiResponseRegardlessOfWhatItReturns() {
         JsonNode response = groundedResponse("""
                 {"brand":"Acme","name":null,"price":null,"originalPrice":null,"currency":null,\
-                "imageUrl":"javascript:alert(1)","color":null,"availableSizes":[],"stockText":null}""");
+                "imageUrl":"https://images.nordstrom.com/plausible-looking.jpg","color":null,"availableSizes":[],"stockText":null}""");
 
         Optional<ProductPageDetails> result = enricher(properties("key", "http://localhost:1")).extractDetails(response, PRODUCT_URL);
 
@@ -259,7 +269,7 @@ class OpenAiProductDetailEnricherTest {
     void enrich_whenFakeServerIsSlowerThanReadTimeout_returnsEmptyRatherThanThrowing() throws IOException {
         String baseUrl = startSlowFakeServer(2000);
         RetailSearchProperties shortTimeoutProperties = new RetailSearchProperties(
-                "key", "gpt-4.1", baseUrl, 200, 200, 25, 4);
+                "key", "test-model", baseUrl, 200, 200, 25, 4);
 
         Optional<ProductPageDetails> result = enricher(shortTimeoutProperties).enrich(PRODUCT_URL);
 
@@ -277,6 +287,45 @@ class OpenAiProductDetailEnricherTest {
 
         assertThat(result).isPresent();
         assertThat(result.get().brand()).isEqualTo("Acme");
+    }
+
+    // --- Live images are never fetched/enriched at all ------------------------------
+
+    /**
+     * Regression test for the removed page-image-fetch fallback: {@code
+     * enrich} must issue exactly ONE HTTP request (to the configured OpenAI
+     * base URL) and never a second request of any kind, for images or
+     * anything else - directly proving "no image enrichment call occurs"
+     * and "no Nordstrom product page fetch occurs".
+     */
+    @Test
+    void enrich_makesExactlyOneHttpRequestPerCallNeverASecondRequestForAnImage() throws IOException {
+        java.util.concurrent.atomic.AtomicInteger requestCount = new java.util.concurrent.atomic.AtomicInteger();
+        String body = groundedResponseJson("""
+                {"brand":"Acme","name":"Verified Navy Suit","price":299.99,"originalPrice":null,\
+                "currency":"USD","imageUrl":null,"color":null,"availableSizes":[],"stockText":null}""");
+        String baseUrl = startFakeServerCountingRequests(200, body, requestCount);
+
+        Optional<ProductPageDetails> result = enricher(properties("key", baseUrl)).enrich(PRODUCT_URL);
+
+        assertThat(result).isPresent();
+        assertThat(result.get().imageUrl()).isNull();
+        assertThat(requestCount.get()).isEqualTo(1);
+    }
+
+    @Test
+    void enrich_sendsTheConfiguredModel_neverAHardcodedOrSdkDefault() throws IOException {
+        AtomicReference<String> capturedRequestBody = new AtomicReference<>();
+        String baseUrl = startFakeServerCapturingRequestBody(200, """
+                {"status": "completed", "output": []}
+                """, capturedRequestBody);
+        RetailSearchProperties properties =
+                new RetailSearchProperties("key", "custom-configured-model", baseUrl, 2000, 5000, 25, 4);
+
+        enricher(properties).enrich(PRODUCT_URL);
+
+        JsonNode sentBody = MAPPER.readTree(capturedRequestBody.get());
+        assertThat(sentBody.path("model").asString(null)).isEqualTo("custom-configured-model");
     }
 
     private JsonNode groundedResponse(String outputText) {
@@ -332,6 +381,34 @@ class OpenAiProductDetailEnricherTest {
         fakeServer = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
         fakeServer.createContext("/responses", exchange -> {
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        fakeServer.start();
+        return "http://localhost:" + fakeServer.getAddress().getPort();
+    }
+
+    private String startFakeServerCapturingRequestBody(int status, String responseBody, AtomicReference<String> captured) throws IOException {
+        fakeServer = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
+        fakeServer.createContext("/responses", exchange -> {
+            captured.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        fakeServer.start();
+        return "http://localhost:" + fakeServer.getAddress().getPort();
+    }
+
+    private String startFakeServerCountingRequests(int status, String responseBody, java.util.concurrent.atomic.AtomicInteger requestCount) throws IOException {
+        fakeServer = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
+        fakeServer.createContext("/", exchange -> {
+            requestCount.incrementAndGet();
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(status, bytes.length);
             exchange.getResponseBody().write(bytes);

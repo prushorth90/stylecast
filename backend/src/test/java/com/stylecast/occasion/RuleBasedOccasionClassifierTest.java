@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 class RuleBasedOccasionClassifierTest {
 
@@ -212,4 +213,32 @@ class RuleBasedOccasionClassifierTest {
 
         assertThat(items).isEmpty();
     }
+
+    // --- Multi-item phrase splitting (confirmed bug fix) ---------------------------
+
+    @Test
+    void classify_spaceSeparatedMultiItemPhrase_splitsIntoDistinctTopBottomFootwearItems() {
+        // Regression test for a confirmed bug: "shirt trousers shoes" (no separator at
+        // all) used to collapse into a single FOOTWEAR item and produce three
+        // footwear-only looks - it must now split into three distinct requested items.
+        List<RequestedItem> items = requestedItemsFor("shirt trousers shoes");
+
+        assertThat(items).extracting(RequestedItem::originalPhrase, RequestedItem::genericCategory)
+                .containsExactly(
+                        tuple("shirt", GenericItemCategory.TOP),
+                        tuple("trousers", GenericItemCategory.BOTTOM),
+                        tuple("shoes", GenericItemCategory.FOOTWEAR));
+        // Never all three collapsed into FOOTWEAR.
+        assertThat(items).extracting(RequestedItem::genericCategory)
+                .doesNotContainSequence(GenericItemCategory.FOOTWEAR, GenericItemCategory.FOOTWEAR, GenericItemCategory.FOOTWEAR);
+    }
+
+    @Test
+    void classify_blazerTrousersLoafers_splitsIntoDistinctOuterwearBottomFootwearItems() {
+        List<RequestedItem> items = requestedItemsFor("blazer trousers loafers");
+
+        assertThat(items).extracting(RequestedItem::genericCategory)
+                .containsExactly(GenericItemCategory.OUTERWEAR, GenericItemCategory.BOTTOM, GenericItemCategory.FOOTWEAR);
+    }
+
 }

@@ -69,6 +69,19 @@ public final class OccasionInterpretationValidator {
      * unknown {@code genericCategory} value throws, the same strict
      * convention {@link #parseEnumList} already uses for enum arrays, since
      * this is model output that must never be persisted when invalid.
+     *
+     * <p>Deterministic parsing runs as a safety net over each AI-provided
+     * item: {@link RequestedItemPhraseSplitter#splitPhrase} re-checks
+     * whether {@code originalPhrase} actually merges more than one
+     * recognized garment (the model can occasionally do this the same way
+     * the rule-based fallback used to, e.g. returning a single {@code
+     * "shirt trousers shoes"} item). When it does, the merged item is
+     * replaced by the individually recognized ones instead of trusting the
+     * model's single category; when the phrase isn't a recognized multi-
+     * garment merge (including phrases our deterministic keywords don't
+     * recognize at all), the model's own phrase/category are trusted as-is
+     * - LLM assistance only kicks in where deterministic parsing has
+     * nothing to say.
      */
     private static List<RequestedItem> parseRequestedItems(JsonNode json) {
         JsonNode node = json.path("requestedItems");
@@ -90,15 +103,36 @@ public final class OccasionInterpretationValidator {
             Boolean required = itemNode.path("required").isBoolean() ? itemNode.path("required").asBoolean() : null;
             String activityContext = itemNode.path("activityContext").asString(null);
 
-            RequestedItem item = RequestedItemNormalizer.normalize(
-                    originalPhrase, genericCategory, searchTerms, required, activityContext, displayOrder);
-            if (item != null) {
-                items.add(item);
-                displayOrder++;
+            List<RequestedItemPhraseSplitter.SplitItem> split =
+                    RequestedItemPhraseSplitter.splitPhrase(originalPhrase, activityContext);
+            if (split.size() <= 1) {
+                // Not a recognized multi-garment merge (or nothing our deterministic
+                // keywords recognize at all) - trust the model's own phrase/category.
+                RequestedItem item = RequestedItemNormalizer.normalize(
+                        originalPhrase, genericCategory, searchTerms, required, activityContext, displayOrder);
+                if (item != null) {
+                    items.add(item);
+                    displayOrder++;
+                }
+            } else {
+                // The model merged several distinct garments into one item - split it,
+                // discarding the model's single category in favor of the ones actually
+                // present. Search terms were built for the merged phrase, not each part,
+                // so they are intentionally not reused here (each sub-item falls back to
+                // its own phrase as its search term via RequestedItemNormalizer).
+                for (RequestedItemPhraseSplitter.SplitItem splitItem : split) {
+                    RequestedItem item = RequestedItemNormalizer.normalize(
+                            splitItem.phrase(), splitItem.category(), List.of(), required, activityContext, displayOrder);
+                    if (item != null) {
+                        items.add(item);
+                        displayOrder++;
+                    }
+                }
             }
         }
         return List.copyOf(items);
     }
+
 
     private static GenericItemCategory parseGenericItemCategory(JsonNode node) {
         String raw = node.isValueNode() ? node.asString(null) : null;

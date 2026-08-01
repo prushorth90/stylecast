@@ -26,8 +26,9 @@ import java.util.Optional;
  * Responses API call per candidate URL - reusing the same {@code
  * web_search} tool restricted to {@code nordstrom.com} that {@link
  * OpenAiNordstromProductSearchProvider} already uses, rather than StyleCast
- * fetching/parsing the Nordstrom page itself (see the retail boundaries in
- * {@code .github/copilot-instructions.md}: "do not scrape Nordstrom").
+ * fetching/parsing the Nordstrom page itself for brand/name/price/color/
+ * sizes/stock/department (see the retail boundaries in {@code
+ * .github/copilot-instructions.md}: "do not scrape Nordstrom").
  *
  * <p>Trust model: a claimed field is only kept if (a) the response's own
  * {@code url_citation} annotations include the exact requested product URL
@@ -37,9 +38,21 @@ import java.util.Optional;
  * plausible price range, 3-letter currency code, etc.). Anything else is
  * discarded rather than trusted - see {@link #extractDetails}.
  *
+ * <p><b>Product images are deliberately never populated for live
+ * Nordstrom candidates</b> (a live, authorized product feed is not yet
+ * available - see docs/ROADMAP.md): {@link ProductPageDetails#imageUrl()}
+ * is always {@code null} here, regardless of anything the model's JSON
+ * response happens to include under an {@code imageUrl} key - this class
+ * makes exactly ONE outbound HTTP request per candidate (to the
+ * configured OpenAI base URL) and never makes a second request, of any
+ * kind, solely to obtain an image. {@code imageUrl} remains a field on
+ * {@link ProductPageDetails}/{@link RetailProductCandidate}/the persisted
+ * entity/DTO purely for backward compatibility (no schema migration is
+ * warranted just to drop it) - new live items simply never set it.
+ *
  * <p>Never throws: {@link #enrich} catches every failure (missing API key,
- * timeout, error response, malformed/ungrounded output) and returns {@link
- * Optional#empty()}, so a failed enrichment attempt never discards an
+ * timeout, error response, malformed/ungrounded output) and never lets an
+ * exception escape, so a failed enrichment attempt never discards an
  * otherwise-valid candidate.
  */
 @Component
@@ -87,6 +100,7 @@ public class OpenAiProductDetailEnricher implements ProductDetailEnricher {
         }
     }
 
+
     private ObjectNode buildRequestBody(String productUrl) {
         ObjectNode root = objectMapper.createObjectNode();
         root.put("model", properties.openaiModel());
@@ -107,7 +121,7 @@ public class OpenAiProductDetailEnricher implements ProductDetailEnricher {
         return "Use web search to open this exact Nordstrom product page and report only what is explicitly "
                 + "shown on it: " + productUrl + ". "
                 + "Respond with ONLY a single-line JSON object (no other text before or after it) with exactly "
-                + "these keys: brand, name, price, originalPrice, currency, imageUrl, color, availableSizes, "
+                + "these keys: brand, name, price, originalPrice, currency, color, availableSizes, "
                 + "stockText, department. Use null for any field not explicitly shown on the page - never guess, "
                 + "estimate, or recall a value from memory or training data. price and originalPrice must be plain "
                 + "numbers with no currency symbol, or null. availableSizes must be a JSON array of strings "
@@ -200,13 +214,15 @@ public class OpenAiProductDetailEnricher implements ProductDetailEnricher {
         }
 
         BigDecimal price = validPrice(json.path("price"));
+        // imageUrl is deliberately never populated from the AI response here (see class docs) -
+        // live Nordstrom candidates never depend on an image; the field stays null.
         ProductPageDetails details = new ProductPageDetails(
                 validString(json.path("brand"), 150),
                 validString(json.path("name"), 300),
                 price,
                 validOriginalPrice(json.path("originalPrice"), price),
                 validCurrency(json.path("currency")),
-                validUrl(json.path("imageUrl")),
+                null,
                 validString(json.path("color"), 50),
                 validSizes(json.path("availableSizes")),
                 validString(json.path("stockText"), 100),
@@ -292,14 +308,6 @@ public class OpenAiProductDetailEnricher implements ProductDetailEnricher {
         }
         String upper = value.toUpperCase(Locale.ROOT);
         return upper.matches("[A-Z]{3}") ? upper : null;
-    }
-
-    private String validUrl(JsonNode node) {
-        String value = validString(node, 1000);
-        if (value == null) {
-            return null;
-        }
-        return (value.startsWith("http://") || value.startsWith("https://")) ? value : null;
     }
 
     private List<String> validSizes(JsonNode node) {

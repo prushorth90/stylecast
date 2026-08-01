@@ -5,6 +5,7 @@ import com.stylecast.event.Event;
 import com.stylecast.event.EventRepository;
 import com.stylecast.event.EventSetting;
 import com.stylecast.occasion.dto.OccasionInterpretationResponse;
+import com.stylecast.testsupport.NoExternalNetworkGuardConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,8 +14,12 @@ import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRe
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -31,17 +36,32 @@ import static org.assertj.core.api.Assertions.within;
  * Full-request tests for {@code GET /api/events/{eventId}/interpretation} and
  * {@code POST /api/events/{eventId}/interpretation/regenerate}.
  *
- * <p>The test application configuration never sets {@code OPENAI_API_KEY}, so
- * the real {@link OpenAiOccasionClassifier} bean always fails fast (no
- * network call attempted) and every classification in this test class
- * exercises {@link RuleBasedOccasionClassifier} - these tests never call the
- * live OpenAI API. AI-path response normalization is covered separately by
- * {@code OpenAiOccasionClassifierTest} and {@code OccasionInterpretationServiceTest}.
+ * <p>{@link #forceNoRealOpenAiCalls} unconditionally overrides {@code
+ * stylecast.occasion-classifier.openai-api-key}/{@code base-url} at the
+ * highest property-source precedence (above OS environment variables, above
+ * {@code application-test.yml}) - so the real {@link OpenAiOccasionClassifier}
+ * bean always fails fast (no network call attempted) regardless of whether
+ * the machine running these tests happens to have a real {@code
+ * OPENAI_API_KEY} exported, and every classification in this test class
+ * deterministically exercises {@link RuleBasedOccasionClassifier} instead -
+ * these tests never call the live OpenAI API. {@link
+ * NoExternalNetworkGuardConfig} additionally fails the test immediately if
+ * that override is ever lost. AI-path response normalization is covered
+ * separately by {@code OpenAiOccasionClassifierTest} and {@code
+ * OccasionInterpretationServiceTest}.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureTestRestTemplate
 @Testcontainers
+@ActiveProfiles("test")
+@Import(NoExternalNetworkGuardConfig.class)
 class OccasionInterpretationControllerTest {
+
+    @DynamicPropertySource
+    static void forceNoRealOpenAiCalls(DynamicPropertyRegistry registry) {
+        registry.add("stylecast.occasion-classifier.openai-api-key", () -> "");
+        registry.add("stylecast.occasion-classifier.base-url", () -> "http://localhost:1");
+    }
 
     @Container
     @ServiceConnection

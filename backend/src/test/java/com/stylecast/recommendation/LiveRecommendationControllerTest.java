@@ -14,6 +14,8 @@ import com.stylecast.occasion.OccasionInterpretation;
 import com.stylecast.occasion.OccasionInterpretationRepository;
 import com.stylecast.occasion.OccasionType;
 import com.stylecast.occasion.RequestedItem;
+import com.stylecast.recommendation.dto.LiveGenerationJobResponse;
+import com.stylecast.recommendation.dto.LiveOutfitItemResponse;
 import com.stylecast.recommendation.dto.LiveRecommendationsResponse;
 import com.stylecast.retail.CandidateAudience;
 import com.stylecast.retail.RetailProductCandidate;
@@ -35,6 +37,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.context.ActiveProfiles;
+import com.stylecast.testsupport.NoExternalNetworkGuardConfig;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpStatus;
@@ -68,6 +73,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureTestRestTemplate
 @Testcontainers
+@ActiveProfiles("test")
+@Import(NoExternalNetworkGuardConfig.class)
 class LiveRecommendationControllerTest {
 
     @Container
@@ -144,9 +151,59 @@ class LiveRecommendationControllerTest {
                 Instant.now(), "fake");
     }
 
+    private RetailProductCandidate candidateWithImage(String url, String imageUrl) {
+        return new RetailProductCandidate(
+                RetailProductSource.AI_WEB_SEARCH, Retailer.NORDSTROM, "Navy Wedding Suit", null, null, null, null,
+                null, url, imageUrl, null, null, List.of(), null, false, false, false, CandidateAudience.UNKNOWN,
+                Instant.now(), "fake");
+    }
+
+    /**
+     * Drives the full asynchronous generation flow exactly as the frontend
+     * would (start job -&gt; poll status -&gt; fetch result) and returns the
+     * final {@code GET .../recommendations/live} response, so every
+     * existing caller of this helper keeps working unchanged even though
+     * {@code POST .../generate} itself now only returns a fast HTTP 202 job
+     * acknowledgement rather than the recommendations directly.
+     */
     private ResponseEntity<LiveRecommendationsResponse> generate(UUID eventId) {
+        ResponseEntity<LiveGenerationJobResponse> started = startGenerateJob(eventId);
+        assertThat(started.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        awaitJobTerminal(eventId);
+        return getRecommendations(eventId);
+    }
+
+    private ResponseEntity<LiveGenerationJobResponse> startGenerateJob(UUID eventId) {
         return restTemplate.postForEntity(
-                url("/api/events/" + eventId + "/recommendations/live/generate"), null, LiveRecommendationsResponse.class);
+                url("/api/events/" + eventId + "/recommendations/live/generate"), null, LiveGenerationJobResponse.class);
+    }
+
+    private LiveGenerationJobResponse getJobStatus(UUID eventId) {
+        return restTemplate.getForEntity(
+                url("/api/events/" + eventId + "/recommendations/live/status"), LiveGenerationJobResponse.class).getBody();
+    }
+
+    private LiveGenerationJobResponse awaitJobTerminal(UUID eventId) {
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (System.currentTimeMillis() < deadline) {
+            LiveGenerationJobResponse status = getJobStatus(eventId);
+            if (status != null && isTerminal(status.status())) {
+                return status;
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while polling job status", e);
+            }
+        }
+        throw new AssertionError("Live recommendation generation job for event " + eventId + " did not reach a terminal state in time");
+    }
+
+    private boolean isTerminal(LiveGenerationJobStatus status) {
+        return status == LiveGenerationJobStatus.COMPLETED
+                || status == LiveGenerationJobStatus.PARTIAL
+                || status == LiveGenerationJobStatus.FAILED;
     }
 
     private ResponseEntity<LiveRecommendationsResponse> retryMissing(UUID eventId) {
@@ -198,6 +255,88 @@ class LiveRecommendationControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
     }
 
+    // --- Asynchronous job behavior ---------------------------------------------------
+
+    @Test
+    void status_withoutAnyGenerationEverStarted_returnsNotStarted() {
+        UUID eventId = createEvent("Networking Mixer");
+        savePreferences(eventId, BigDecimal.valueOf(1500));
+        saveInterpretation(eventId, OccasionType.NETWORKING, 5, List.of(ProductCategory.SUIT));
+
+        LiveGenerationJobResponse status = getJobStatus(eventId);
+
+        assertThat(status).isNotNull();
+        assertThat(status.status()).isEqualTo(LiveGenerationJobStatus.NOT_STARTED);
+        assertThat(status.jobId()).isNull();
+    }
+
+    @Test
+    void status_withUnknownEventId_returns404() {
+        ResponseEntity<ApiError> response = restTemplate.getForEntity(
+                url("/api/events/" + UUID.randomUUID() + "/recommendations/live/status"), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void generate_returns202ImmediatelyWithJobFields_neverBlockingOnTheLiveSearch() {
+        UUID eventId = createEvent("Sarah & Tom's Wedding");
+        savePreferences(eventId, BigDecimal.valueOf(2000));
+        saveInterpretation(eventId, OccasionType.WEDDING, 9, List.of(ProductCategory.SUIT));
+        fakeProvider.blockSearches();
+
+        try {
+            ResponseEntity<LiveGenerationJobResponse> response = startGenerateJob(eventId);
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+            LiveGenerationJobResponse job = response.getBody();
+            assertThat(job).isNotNull();
+            assertThat(job.eventId()).isEqualTo(eventId);
+            assertThat(job.jobId()).isNotNull();
+            assertThat(job.startedAt()).isNotNull();
+            assertThat(job.status()).isIn(LiveGenerationJobStatus.QUEUED, LiveGenerationJobStatus.PROCESSING);
+        } finally {
+            fakeProvider.releaseSearches();
+        }
+    }
+
+    @Test
+    void generate_calledTwiceWhileFirstJobStillProcessing_returnsTheSameActiveJobInsteadOfStartingASecondOne() {
+        UUID eventId = createEvent("Sarah & Tom's Wedding");
+        savePreferences(eventId, BigDecimal.valueOf(2000));
+        saveInterpretation(eventId, OccasionType.WEDDING, 9, List.of(ProductCategory.SUIT));
+        fakeProvider.blockSearches();
+
+        try {
+            LiveGenerationJobResponse firstJob = startGenerateJob(eventId).getBody();
+            LiveGenerationJobResponse secondJob = startGenerateJob(eventId).getBody();
+
+            assertThat(firstJob).isNotNull();
+            assertThat(secondJob).isNotNull();
+            assertThat(secondJob.jobId()).isEqualTo(firstJob.jobId());
+        } finally {
+            fakeProvider.releaseSearches();
+        }
+
+        awaitJobTerminal(eventId);
+    }
+
+    @Test
+    void generate_whenLiveSearchThrowsAnUnexpectedException_reportsAFailedJobWithoutLeakingExceptionDetails() {
+        UUID eventId = createEvent("Sarah & Tom's Wedding");
+        savePreferences(eventId, BigDecimal.valueOf(2000));
+        saveInterpretation(eventId, OccasionType.WEDDING, 9, List.of(ProductCategory.SUIT));
+        fakeProvider.setFailure(new IllegalStateException("some internal detail that must never reach a client"));
+
+        startGenerateJob(eventId);
+        LiveGenerationJobResponse finalStatus = awaitJobTerminal(eventId);
+
+        assertThat(finalStatus.status()).isEqualTo(LiveGenerationJobStatus.FAILED);
+        assertThat(finalStatus.completedAt()).isNotNull();
+        assertThat(finalStatus.message()).isNotNull();
+        assertThat(finalStatus.message()).doesNotContain("IllegalStateException", "some internal detail");
+    }
+
     // --- Successful (complete) live generation --------------------------------------
 
     @Test
@@ -233,6 +372,153 @@ class LiveRecommendationControllerTest {
         assertThat(getResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(getResponse.getBody()).isNotNull();
         assertThat(getResponse.getBody().generation()).isEqualTo(body.generation());
+        assertThat(getResponse.getBody().stale()).isFalse();
+    }
+
+    /**
+     * {@code imageUrl} stays a nullable field on the entity/DTO purely for
+     * backward/database compatibility (see {@code
+     * OpenAiProductDetailEnricher}'s class docs - live Nordstrom candidates
+     * never set it any more) - this proves that IF a candidate happens to
+     * carry a non-null value (e.g. from another source), it still survives
+     * persistence and every DTO mapping unchanged.
+     */
+    @Test
+    void generate_withCandidateImageUrl_survivesPersistenceAndApiMapping() {
+        UUID eventId = createEvent("Sarah & Tom's Wedding");
+        savePreferences(eventId, BigDecimal.valueOf(2000));
+        saveInterpretation(eventId, OccasionType.WEDDING, 9, List.of(ProductCategory.SUIT));
+
+        fakeProvider.setResult(ProductCategory.SUIT, new RetailProductSearchResult(
+                List.of(candidateWithImage("https://www.nordstrom.com/s/navy-suit/1111111",
+                        "https://images.nordstrom.com/navy-suit.jpg"))));
+        fakeProvider.setResult(ProductCategory.SHOES, new RetailProductSearchResult(
+                List.of(candidate("https://www.nordstrom.com/s/oxford-shoes/2222222"))));
+
+        LiveRecommendationsResponse generated = generate(eventId).getBody();
+        assertThat(generated).isNotNull();
+        assertThat(generated.recommendations()).hasSize(1);
+        assertThat(generated.recommendations().get(0).items())
+                .filteredOn(item -> item.productUrl().equals("https://www.nordstrom.com/s/navy-suit/1111111"))
+                .singleElement()
+                .satisfies(item -> assertThat(item.imageUrl()).isEqualTo("https://images.nordstrom.com/navy-suit.jpg"));
+
+        // Persisted + re-read via GET (a fresh mapping pass, not the in-memory generate() response) - still present.
+        LiveRecommendationsResponse fetched = getRecommendations(eventId).getBody();
+        assertThat(fetched).isNotNull();
+        assertThat(fetched.recommendations().get(0).items())
+                .filteredOn(item -> item.productUrl().equals("https://www.nordstrom.com/s/navy-suit/1111111"))
+                .singleElement()
+                .satisfies(item -> assertThat(item.imageUrl()).isEqualTo("https://images.nordstrom.com/navy-suit.jpg"));
+    }
+
+    /**
+     * Live Nordstrom images are no longer fetched/enriched at all (no
+     * authorized product feed available yet) - a fake candidate that never
+     * sets {@code imageUrl} (the realistic case for every new live
+     * generation now) must still persist and map through the DTO cleanly
+     * as {@code null}, alongside every other reliable field.
+     */
+    @Test
+    void generate_withoutImageUrl_persistsAndMapsTitleAndProductUrlWithNullImageUrl() {
+        UUID eventId = createEvent("Job Interview");
+        savePreferences(eventId, BigDecimal.valueOf(600));
+        saveInterpretation(eventId, OccasionType.INTERVIEW, 6, List.of(ProductCategory.SUIT));
+
+        fakeProvider.setResult(ProductCategory.SUIT, new RetailProductSearchResult(
+                List.of(namedCandidate("https://www.nordstrom.com/s/navy-suit/1111111", "Navy Suit"))));
+        fakeProvider.setResult(ProductCategory.SHOES, new RetailProductSearchResult(
+                List.of(candidate("https://www.nordstrom.com/s/oxford-shoes/2222222"))));
+
+        LiveRecommendationsResponse generated = generate(eventId).getBody();
+        assertThat(generated).isNotNull();
+        assertThat(generated.recommendations().get(0).items())
+                .filteredOn(item -> item.productUrl().equals("https://www.nordstrom.com/s/navy-suit/1111111"))
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.title()).isEqualTo("Navy Suit");
+                    assertThat(item.imageUrl()).isNull();
+                });
+
+        LiveRecommendationsResponse fetched = getRecommendations(eventId).getBody();
+        assertThat(fetched).isNotNull();
+        assertThat(fetched.recommendations().get(0).items())
+                .filteredOn(item -> item.productUrl().equals("https://www.nordstrom.com/s/navy-suit/1111111"))
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.title()).isEqualTo("Navy Suit");
+                    assertThat(item.imageUrl()).isNull();
+                });
+    }
+
+    @Test
+    void generate_calledTwice_replacesOldImagelessGenerationWithNewOneContainingImages() {
+        UUID eventId = createEvent("Sarah & Tom's Wedding");
+        savePreferences(eventId, BigDecimal.valueOf(2000));
+        saveInterpretation(eventId, OccasionType.WEDDING, 9, List.of(ProductCategory.SUIT));
+
+        // First generation: no image available yet.
+        fakeProvider.setResult(ProductCategory.SUIT, new RetailProductSearchResult(
+                List.of(candidate("https://www.nordstrom.com/s/navy-suit/1111111"))));
+        fakeProvider.setResult(ProductCategory.SHOES, new RetailProductSearchResult(
+                List.of(candidate("https://www.nordstrom.com/s/oxford-shoes/2222222"))));
+
+        LiveRecommendationsResponse first = generate(eventId).getBody();
+        assertThat(first).isNotNull();
+        assertThat(first.recommendations().get(0).items()).allSatisfy(item -> assertThat(item.imageUrl()).isNull());
+
+        // Regenerate: the same product now has a confirmed image.
+        fakeProvider.setResult(ProductCategory.SUIT, new RetailProductSearchResult(
+                List.of(candidateWithImage("https://www.nordstrom.com/s/navy-suit/1111111",
+                        "https://images.nordstrom.com/navy-suit.jpg"))));
+
+        LiveRecommendationsResponse second = generate(eventId).getBody();
+        assertThat(second).isNotNull();
+        assertThat(second.generation()).isGreaterThan(first.generation());
+        assertThat(second.recommendations().get(0).items())
+                .filteredOn(item -> item.productUrl().equals("https://www.nordstrom.com/s/navy-suit/1111111"))
+                .singleElement()
+                .satisfies(item -> assertThat(item.imageUrl()).isEqualTo("https://images.nordstrom.com/navy-suit.jpg"));
+
+        // GET reflects only the latest generation - the old image-less generation is superseded, not shown.
+        LiveRecommendationsResponse fetched = getRecommendations(eventId).getBody();
+        assertThat(fetched).isNotNull();
+        assertThat(fetched.generation()).isEqualTo(second.generation());
+        assertThat(fetched.recommendations()).hasSize(1);
+        assertThat(fetched.recommendations().get(0).items())
+                .filteredOn(item -> item.productUrl().equals("https://www.nordstrom.com/s/navy-suit/1111111"))
+                .singleElement()
+                .satisfies(item -> assertThat(item.imageUrl()).isEqualTo("https://images.nordstrom.com/navy-suit.jpg"));
+    }
+
+    @Test
+    void getRecommendations_afterInvalidateStale_reportsStaleTrueWithoutChangingGenerationOrItems() {
+        UUID eventId = createEvent("Sarah & Tom's Wedding");
+        savePreferences(eventId, BigDecimal.valueOf(2000));
+        saveInterpretation(eventId, OccasionType.WEDDING, 9, List.of(ProductCategory.SUIT));
+
+        fakeProvider.setResult(ProductCategory.SUIT, new RetailProductSearchResult(
+                List.of(candidate("https://www.nordstrom.com/s/navy-suit/1111111"))));
+        fakeProvider.setResult(ProductCategory.SHOES, new RetailProductSearchResult(
+                List.of(candidate("https://www.nordstrom.com/s/oxford-shoes/2222222"))));
+
+        LiveRecommendationsResponse generated = generate(eventId).getBody();
+        assertThat(generated).isNotNull();
+        assertThat(generated.stale()).isFalse();
+
+        ResponseEntity<Void> invalidateResponse = restTemplate.postForEntity(
+                url("/api/events/" + eventId + "/recommendations/live/invalidate-stale"), null, Void.class);
+        assertThat(invalidateResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+        ResponseEntity<LiveRecommendationsResponse> getResponse = getRecommendations(eventId);
+        assertThat(getResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        LiveRecommendationsResponse body = getResponse.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.stale()).isTrue();
+        // Marking stale never regenerates or drops the existing items - it's a presentation flag only.
+        assertThat(body.generation()).isEqualTo(generated.generation());
+        assertThat(body.recommendations()).hasSize(1);
+        assertThat(body.recommendations().get(0).items()).hasSize(2);
     }
 
     // --- Partial results: one category missing, others preserved --------------------
@@ -469,6 +755,87 @@ class LiveRecommendationControllerTest {
                 .noneMatch(item -> item.title() != null && item.title().toLowerCase().contains("boot"));
     }
 
+    /**
+     * Regression test for the confirmed production bug: a merged multi-item
+     * phrase ("shirt trousers shoes") must never collapse into a single
+     * FOOTWEAR search - each garment is searched independently, and the
+     * overall result is only {@code COMPLETE} once every one of them is
+     * found (never presented as complete while any is still missing).
+     */
+    @Test
+    void generate_withShirtTrousersShoesRequestedItems_searchesEachIndependentlyAndNeverCollapsesToFootwear() {
+        UUID eventId = createEvent("Job Interview");
+        savePreferences(eventId, BigDecimal.valueOf(600));
+        List<RequestedItem> requestedItems = List.of(
+                requestedItem("shirt", GenericItemCategory.TOP, null, 0),
+                requestedItem("trousers", GenericItemCategory.BOTTOM, null, 1),
+                requestedItem("shoes", GenericItemCategory.FOOTWEAR, null, 2));
+        saveInterpretationWithRequestedItems(eventId, OccasionType.INTERVIEW, 6, requestedItems);
+
+        fakeProvider.setResultForPhrase("shirt", new RetailProductSearchResult(
+                List.of(namedCandidate("https://www.nordstrom.com/s/dress-shirt/1111111", "White Dress Shirt"))));
+        fakeProvider.setResultForPhrase("trousers", new RetailProductSearchResult(
+                List.of(namedCandidate("https://www.nordstrom.com/s/trousers/2222222", "Navy Trousers"))));
+        fakeProvider.setResultForPhrase("shoes", new RetailProductSearchResult(
+                List.of(namedCandidate("https://www.nordstrom.com/s/oxford-shoes/3333333", "Oxford Shoes"))));
+
+        ResponseEntity<LiveRecommendationsResponse> response = generate(eventId);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        LiveRecommendationsResponse body = response.getBody();
+        assertThat(body).isNotNull();
+
+        // Each garment was searched as its own independent item request - never merged into one.
+        assertThat(fakeProvider.phraseCallLog()).containsExactlyInAnyOrder("shirt", "trousers", "shoes");
+        assertThat(body.foundRequestedItems()).extracting(RequestedItemSummary::originalPhrase)
+                .containsExactlyInAnyOrder("shirt", "trousers", "shoes");
+        assertThat(body.missingRequestedItems()).isEmpty();
+        // Only COMPLETE once every requested item is found.
+        assertThat(body.status()).isEqualTo(LiveRecommendationCompleteness.COMPLETE);
+
+        assertThat(body.recommendations()).hasSize(1);
+        List<LiveOutfitItemResponse> items = body.recommendations().get(0).items();
+        assertThat(items).hasSize(3);
+        assertThat(items).extracting(LiveOutfitItemResponse::requestedItemGenericCategory)
+                .containsExactlyInAnyOrder(GenericItemCategory.TOP, GenericItemCategory.BOTTOM, GenericItemCategory.FOOTWEAR);
+        // Never collapsed into all-FOOTWEAR (the exact production bug this guards against).
+        assertThat(items).extracting(LiveOutfitItemResponse::requestedItemGenericCategory)
+                .doesNotContainSequence(GenericItemCategory.FOOTWEAR, GenericItemCategory.FOOTWEAR, GenericItemCategory.FOOTWEAR);
+    }
+
+    /**
+     * When one of the independently-searched garments is missing, the
+     * result must be reported as {@code PARTIAL} (never {@code COMPLETE}) -
+     * a partial explicit-item result is never silently presented as a full
+     * outfit.
+     */
+    @Test
+    void generate_withShirtTrousersShoesRequestedItemsAndOneMissing_reportsPartialNotComplete() {
+        UUID eventId = createEvent("Job Interview");
+        savePreferences(eventId, BigDecimal.valueOf(600));
+        List<RequestedItem> requestedItems = List.of(
+                requestedItem("shirt", GenericItemCategory.TOP, null, 0),
+                requestedItem("trousers", GenericItemCategory.BOTTOM, null, 1),
+                requestedItem("shoes", GenericItemCategory.FOOTWEAR, null, 2));
+        saveInterpretationWithRequestedItems(eventId, OccasionType.INTERVIEW, 6, requestedItems);
+
+        fakeProvider.setResultForPhrase("shirt", new RetailProductSearchResult(
+                List.of(namedCandidate("https://www.nordstrom.com/s/dress-shirt/1111111", "White Dress Shirt"))));
+        fakeProvider.setResultForPhrase("trousers", new RetailProductSearchResult(
+                List.of(namedCandidate("https://www.nordstrom.com/s/trousers/2222222", "Navy Trousers"))));
+        fakeProvider.setResultForPhrase("shoes", new RetailProductSearchResult(List.of()));
+
+        ResponseEntity<LiveRecommendationsResponse> response = generate(eventId);
+
+        LiveRecommendationsResponse body = response.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.status()).isEqualTo(LiveRecommendationCompleteness.PARTIAL);
+        assertThat(body.foundRequestedItems()).extracting(RequestedItemSummary::originalPhrase)
+                .containsExactlyInAnyOrder("shirt", "trousers");
+        assertThat(body.missingRequestedItems()).extracting(RequestedItemSummary::originalPhrase)
+                .containsExactly("shoes");
+    }
+
     @Test
     void generate_withOldInterpretationHavingNoRequestedItems_usesCategoryTemplatePipelineAndLeavesNewFieldsEmpty() {
         UUID eventId = createEvent("Sarah & Tom's Wedding");
@@ -558,10 +925,20 @@ class LiveRecommendationControllerTest {
         private final List<String> phraseCallLog = new ArrayList<>();
         private final List<RetailProductSearchRequest> requestLog = new ArrayList<>();
         private final AtomicReference<RuntimeException> nextFailure = new AtomicReference<>();
+        private volatile java.util.concurrent.CountDownLatch blockLatch;
 
         @Override
         public RetailProductSearchResult search(RetailProductSearchRequest request) {
             requestLog.add(request);
+            java.util.concurrent.CountDownLatch latch = blockLatch;
+            if (latch != null) {
+                try {
+                    latch.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted while blocked", e);
+                }
+            }
             RuntimeException globalFailure = nextFailure.get();
             if (globalFailure != null) {
                 throw globalFailure;
@@ -605,6 +982,18 @@ class LiveRecommendationControllerTest {
             nextFailure.set(failure);
         }
 
+        /** Makes every subsequent {@link #search} call block until {@link #releaseSearches} is called (or a 10s safety timeout elapses). */
+        void blockSearches() {
+            blockLatch = new java.util.concurrent.CountDownLatch(1);
+        }
+
+        void releaseSearches() {
+            java.util.concurrent.CountDownLatch latch = blockLatch;
+            if (latch != null) {
+                latch.countDown();
+            }
+        }
+
         List<ProductCategory> callLog() {
             return List.copyOf(callLog);
         }
@@ -632,6 +1021,8 @@ class LiveRecommendationControllerTest {
             phraseCallLog.clear();
             requestLog.clear();
             nextFailure.set(null);
+            releaseSearches();
+            blockLatch = null;
         }
     }
 }

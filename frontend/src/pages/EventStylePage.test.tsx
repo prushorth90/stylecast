@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -167,6 +167,7 @@ function recommendationsNotGeneratedResponse() {
       missingRequestedItems: [],
       message: 'Recommendations have not been generated yet for this event.',
       recommendations: [],
+      stale: false,
     }),
     { status: 200 },
   );
@@ -185,6 +186,7 @@ function recommendationsNoResultsResponse() {
       missingRequestedItems: [],
       message: 'No live Nordstrom products were found for required categories: Suit and Shoes.',
       recommendations: [],
+      stale: false,
     }),
     { status: 200 },
   );
@@ -261,6 +263,7 @@ function liveRecommendationsWithResultsResponse(overrides: Record<string, unknow
           ],
         },
       ],
+      stale: false,
       ...overrides,
     }),
     { status: 200 },
@@ -316,6 +319,7 @@ function liveRecommendationsPartialResponse() {
           ],
         },
       ],
+      stale: false,
     }),
     { status: 200 },
   );
@@ -370,6 +374,7 @@ function liveRecommendationsWithVerifiedResultsResponse() {
           ],
         },
       ],
+      stale: false,
     }),
     { status: 200 },
   );
@@ -388,6 +393,7 @@ function liveSearchProviderUnavailableResponse() {
       missingRequestedItems: [],
       message: 'Live Nordstrom search is temporarily unavailable. Please try again shortly.',
       recommendations: [],
+      stale: false,
     }),
     { status: 200 },
   );
@@ -400,6 +406,41 @@ function missingPreferencesErrorResponse() {
       fieldErrors: null,
     }),
     { status: 409 },
+  );
+}
+
+/** HTTP 202 response for `POST .../recommendations/live/generate` under the async job flow. */
+function generateJobAcceptedResponse(overrides: Record<string, unknown> = {}) {
+  return new Response(
+    JSON.stringify({
+      eventId: EVENT_ID,
+      jobId: 'job-1111-1111',
+      status: 'QUEUED',
+      startedAt: '2026-07-28T12:00:00Z',
+      completedAt: null,
+      generation: null,
+      message: null,
+      ...overrides,
+    }),
+    { status: 202 },
+  );
+}
+
+/** Response for `GET .../recommendations/live/status`. */
+function jobStatusResponse(status: string, overrides: Record<string, unknown> = {}) {
+  const terminal = status === 'COMPLETED' || status === 'PARTIAL' || status === 'FAILED';
+  return new Response(
+    JSON.stringify({
+      eventId: EVENT_ID,
+      jobId: 'job-1111-1111',
+      status,
+      startedAt: '2026-07-28T12:00:00Z',
+      completedAt: terminal ? '2026-07-28T12:00:05Z' : null,
+      generation: status === 'COMPLETED' || status === 'PARTIAL' ? 1 : null,
+      message: null,
+      ...overrides,
+    }),
+    { status: 200 },
   );
 }
 
@@ -949,7 +990,6 @@ describe('EventStylePage', () => {
     renderPage();
 
     expect(await screen.findByText('Live Look 1')).toBeInTheDocument();
-    expect(screen.getByText('Live Nordstrom search - temporary integration')).toBeInTheDocument();
     expect(screen.getByText('Live Nordstrom')).toBeInTheDocument();
     // Auto-loaded via GET - no generate click happened.
     expect(fetch).not.toHaveBeenCalledWith(
@@ -992,12 +1032,16 @@ describe('EventStylePage', () => {
   });
 
   it('generates recommendations via POST when clicking Generate Looks, showing a loading state and the resulting summary cards with unverified price/size', async () => {
-    let resolveGenerate: (value: Response) => void = () => {};
+    let resolveStatus: (value: Response) => void = () => {};
+    let recommendationsCallCount = 0;
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
       if (url.includes('/recommendations/live/generate')) {
+        return Promise.resolve(generateJobAcceptedResponse());
+      }
+      if (url.includes('/recommendations/live/status')) {
         return new Promise((resolve) => {
-          resolveGenerate = resolve;
+          resolveStatus = resolve;
         });
       }
       if (url.includes('/interpretation')) {
@@ -1007,7 +1051,10 @@ describe('EventStylePage', () => {
         return Promise.resolve(weatherAvailableResponse());
       }
       if (url.includes('/recommendations')) {
-        return Promise.resolve(recommendationsNotGeneratedResponse());
+        recommendationsCallCount += 1;
+        return Promise.resolve(
+          recommendationsCallCount === 1 ? recommendationsNotGeneratedResponse() : liveRecommendationsWithResultsResponse(),
+        );
       }
       if (url.includes('/preferences')) {
         return Promise.resolve(notFoundResponse());
@@ -1024,7 +1071,7 @@ describe('EventStylePage', () => {
     expect(await screen.findByText('Searching nordstrom.com…')).toBeInTheDocument();
     expect(screen.getByText('Generating…').closest('button')).toBeDisabled();
 
-    resolveGenerate(liveRecommendationsWithResultsResponse());
+    resolveStatus(jobStatusResponse('COMPLETED'));
 
     expect(await screen.findByText('Live Look 1')).toBeInTheDocument();
     expect(screen.getByText('Live Nordstrom')).toBeInTheDocument();
@@ -1049,9 +1096,17 @@ describe('EventStylePage', () => {
     );
   });
 
-  it('shows extracted price, sizes, and availability when the backend independently verified them', async () => {
+  it('never starts a second job when clicking Generate again while a job is still processing', async () => {
+    let generateCallCount = 0;
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
+      if (url.includes('/recommendations/live/generate')) {
+        generateCallCount += 1;
+        return Promise.resolve(generateJobAcceptedResponse());
+      }
+      if (url.includes('/recommendations/live/status')) {
+        return new Promise(() => {}); // never resolves - job stays "processing" for the whole test
+      }
       if (url.includes('/interpretation')) {
         return Promise.resolve(interpretationResponse());
       }
@@ -1059,7 +1114,7 @@ describe('EventStylePage', () => {
         return Promise.resolve(weatherAvailableResponse());
       }
       if (url.includes('/recommendations')) {
-        return Promise.resolve(liveRecommendationsWithVerifiedResultsResponse());
+        return Promise.resolve(recommendationsNotGeneratedResponse());
       }
       if (url.includes('/preferences')) {
         return Promise.resolve(notFoundResponse());
@@ -1067,29 +1122,32 @@ describe('EventStylePage', () => {
       return Promise.resolve(eventResponse());
     });
 
+    const user = userEvent.setup();
     renderPage();
 
-    expect(await screen.findByText(/Verified Navy Suit/)).toBeInTheDocument();
-    expect(screen.getByText('$299.99 USD (was $349.99)')).toBeInTheDocument();
-    expect(screen.getByText('Sizes: 40R, 42R')).toBeInTheDocument();
-    expect(screen.getByText('In stock')).toBeInTheDocument();
-    // A known audience/department is shown once independently confirmed.
-    expect(screen.getByText('Men')).toBeInTheDocument();
-    // The old generic "unverified" placeholders must never appear.
-    expect(screen.queryByText('Check price on Nordstrom')).not.toBeInTheDocument();
-    expect(screen.queryByText('Check size on Nordstrom')).not.toBeInTheDocument();
-    expect(screen.queryByText('Check availability on Nordstrom')).not.toBeInTheDocument();
-    // The single top-level notice is always shown regardless of verification status.
-    expect(
-      screen.getByText('Confirm current product details, sizes, prices, and availability on Nordstrom.'),
-    ).toBeInTheDocument();
+    const generateButton = await screen.findByText('Generate Live Nordstrom Looks');
+    await user.click(generateButton);
+    await screen.findByText('Searching nordstrom.com…');
+
+    // The button is disabled while processing, so a real user cannot click it again -
+    // but calling the underlying handler directly (fireEvent) proves the hook itself
+    // also refuses to start a second concurrent job.
+    fireEvent.click(screen.getByText('Generating…'));
+    fireEvent.click(screen.getByText('Generating…'));
+
+    expect(generateCallCount).toBe(1);
   });
 
-  it('shows a no-results message when generation finds no suitable products', async () => {
+  it('shows a failure message and re-enables the button when the generation job fails', async () => {
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
       if (url.includes('/recommendations/live/generate')) {
-        return Promise.resolve(recommendationsNoResultsResponse());
+        return Promise.resolve(generateJobAcceptedResponse());
+      }
+      if (url.includes('/recommendations/live/status')) {
+        return Promise.resolve(
+          jobStatusResponse('FAILED', { message: 'Live recommendation generation failed unexpectedly.' }),
+        );
       }
       if (url.includes('/interpretation')) {
         return Promise.resolve(interpretationResponse());
@@ -1111,6 +1169,126 @@ describe('EventStylePage', () => {
 
     await user.click(await screen.findByText('Generate Live Nordstrom Looks'));
 
+    expect(await screen.findByText('Live recommendation generation failed unexpectedly.')).toBeInTheDocument();
+    expect(screen.getByText('Generate Live Nordstrom Looks').closest('button')).not.toBeDisabled();
+  });
+
+  it('polls status again after a non-terminal check, only fetching the final recommendations once the job completes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let statusCallCount = 0;
+    let recommendationsCallCount = 0;
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/recommendations/live/generate')) {
+        return Promise.resolve(generateJobAcceptedResponse());
+      }
+      if (url.includes('/recommendations/live/status')) {
+        statusCallCount += 1;
+        return Promise.resolve(jobStatusResponse(statusCallCount === 1 ? 'PROCESSING' : 'COMPLETED'));
+      }
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        recommendationsCallCount += 1;
+        return Promise.resolve(
+          recommendationsCallCount === 1 ? recommendationsNotGeneratedResponse() : liveRecommendationsWithResultsResponse(),
+        );
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      renderPage();
+
+      const generateButton = await screen.findByText('Generate Live Nordstrom Looks');
+      await user.click(generateButton);
+      await vi.waitFor(() => expect(statusCallCount).toBe(1));
+
+      await vi.advanceTimersByTimeAsync(3000);
+      await vi.waitFor(() => expect(statusCallCount).toBe(2));
+
+      expect(await screen.findByText('Live Look 1')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never shows price, sizes, availability, or verification chips for a live Nordstrom product, even when the backend independently verified them', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return Promise.resolve(liveRecommendationsWithVerifiedResultsResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    renderPage();
+
+    expect(await screen.findByText(/Verified Navy Suit/)).toBeInTheDocument();
+    // A known audience/department is still shown once independently confirmed.
+    expect(screen.getByText('Men')).toBeInTheDocument();
+    // Product images, current prices, sizes, colors, and availability are never rendered for
+    // live products - even when the backend data includes independently verified values.
+    expect(screen.queryByText('$299.99 USD (was $349.99)')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^\$/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Sizes: 40R, 42R')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Sizes:/)).not.toBeInTheDocument();
+    expect(screen.queryByText('In stock')).not.toBeInTheDocument();
+    expect(screen.queryByText('Check price on Nordstrom')).not.toBeInTheDocument();
+    expect(screen.queryByText('Check size on Nordstrom')).not.toBeInTheDocument();
+    expect(screen.queryByText('Check availability on Nordstrom')).not.toBeInTheDocument();
+    // The single top-level notice is always shown, exactly once, regardless of verification status.
+    expect(
+      screen.getAllByText('Confirm current product details, sizes, prices, and availability on Nordstrom.'),
+    ).toHaveLength(1);
+  });
+
+  it('shows a no-results message when generation finds no suitable products', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/recommendations/live/generate')) {
+        return Promise.resolve(generateJobAcceptedResponse());
+      }
+      if (url.includes('/recommendations/live/status')) {
+        return Promise.resolve(jobStatusResponse('COMPLETED'));
+      }
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return Promise.resolve(recommendationsNoResultsResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByText('Generate Live Nordstrom Looks'));
+
     expect(
       await screen.findByText('No live Nordstrom products were found for required categories: Suit and Shoes.'),
     ).toBeInTheDocument();
@@ -1120,7 +1298,10 @@ describe('EventStylePage', () => {
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
       if (url.includes('/recommendations/live/generate')) {
-        return Promise.resolve(liveSearchProviderUnavailableResponse());
+        return Promise.resolve(generateJobAcceptedResponse());
+      }
+      if (url.includes('/recommendations/live/status')) {
+        return Promise.resolve(jobStatusResponse('COMPLETED'));
       }
       if (url.includes('/interpretation')) {
         return Promise.resolve(interpretationResponse());
@@ -1129,7 +1310,7 @@ describe('EventStylePage', () => {
         return Promise.resolve(weatherAvailableResponse());
       }
       if (url.includes('/recommendations')) {
-        return Promise.resolve(recommendationsNotGeneratedResponse());
+        return Promise.resolve(liveSearchProviderUnavailableResponse());
       }
       if (url.includes('/preferences')) {
         return Promise.resolve(notFoundResponse());
@@ -1153,7 +1334,10 @@ describe('EventStylePage', () => {
     vi.mocked(fetch).mockImplementation((input) => {
       const url = input.toString();
       if (url.includes('/recommendations/live/generate')) {
-        return Promise.resolve(liveRecommendationsPartialResponse());
+        return Promise.resolve(generateJobAcceptedResponse());
+      }
+      if (url.includes('/recommendations/live/status')) {
+        return Promise.resolve(jobStatusResponse('PARTIAL'));
       }
       if (url.includes('/interpretation')) {
         return Promise.resolve(interpretationResponse());
@@ -1162,7 +1346,7 @@ describe('EventStylePage', () => {
         return Promise.resolve(weatherAvailableResponse());
       }
       if (url.includes('/recommendations')) {
-        return Promise.resolve(recommendationsNotGeneratedResponse());
+        return Promise.resolve(liveRecommendationsPartialResponse());
       }
       if (url.includes('/preferences')) {
         return Promise.resolve(notFoundResponse());
@@ -1177,12 +1361,20 @@ describe('EventStylePage', () => {
 
     // The message is clear about what was found vs. missing - never claims completeness.
     expect(await screen.findByText('We found items for Suit, but no matching Shoes.')).toBeInTheDocument();
-    // Valid candidates for the category that was found are still shown, with a working link.
+    // Valid candidates for the category that was found are still shown, with a working link
+    // (both in the board tile and in the section-level "Found" list, hence getAllByText).
     expect(screen.getByText(/Navy Wool Suit/)).toBeInTheDocument();
-    const productLink = screen.getByText('View on Nordstrom');
-    expect(productLink.closest('a')).toHaveAttribute('href', 'https://www.nordstrom.com/s/navy-wool-suit/1111111');
-    expect(productLink.closest('a')).toHaveAttribute('target', '_blank');
-    expect(productLink.closest('a')).toHaveAttribute('rel', 'noopener noreferrer');
+    const productLinks = screen
+      .getAllByText('View on Nordstrom')
+      .filter((el) => el.closest('a')?.getAttribute('href') === 'https://www.nordstrom.com/s/navy-wool-suit/1111111');
+    expect(productLinks.length).toBeGreaterThan(0);
+    productLinks.forEach((link) => {
+      expect(link.closest('a')).toHaveAttribute('target', '_blank');
+      expect(link.closest('a')).toHaveAttribute('rel', 'noopener noreferrer');
+    });
+    // The board is clearly labeled Partial, never Complete.
+    expect(screen.getByText('Partial')).toBeInTheDocument();
+    expect(screen.queryByText('Complete')).not.toBeInTheDocument();
     // A "Retry Missing Items" action is offered for a partial result.
     expect(screen.getByText('Retry Missing Items')).toBeInTheDocument();
   });
@@ -1408,6 +1600,7 @@ describe('EventStylePage', () => {
             ],
           },
         ],
+        stale: false,
       }),
       { status: 200 },
     );
@@ -1449,6 +1642,264 @@ describe('EventStylePage', () => {
 
     // A partial result is clearly marked "Partial" - never presented as a complete outfit.
     expect(screen.getByText('Partial')).toBeInTheDocument();
+  });
+
+  // --- Recommended product sets (text-based, no product images) -----------------
+
+  it('shows a Complete badge and a Live Nordstrom source badge on a complete board', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return Promise.resolve(liveRecommendationsWithResultsResponse());
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Complete')).toBeInTheDocument();
+    expect(screen.queryByText('Partial')).not.toBeInTheDocument();
+    expect(screen.getByText('Live Nordstrom')).toBeInTheDocument();
+    // Live boards are never mislabeled as demo/catalog products.
+    expect(screen.queryByText('Demo catalog')).not.toBeInTheDocument();
+  });
+
+  it('renders no img element, no hanger/placeholder, and no blank image region for a live Nordstrom product - even when imageUrl is present in the data', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return Promise.resolve(
+          liveRecommendationsWithResultsResponse({
+            recommendations: [
+              {
+                id: '55555555-5555-5555-5555-555555555555',
+                eventId: EVENT_ID,
+                generation: 1,
+                rank: 1,
+                name: 'Live Look 1',
+                status: 'ACTIVE',
+                source: 'LIVE_NORDSTROM',
+                explanation: null,
+                generatedAt: '2026-07-28T12:00:00Z',
+                items: [
+                  {
+                    id: '66666666-6666-6666-6666-666666666666',
+                    category: 'SUIT',
+                    retailer: 'NORDSTROM',
+                    title: 'Navy Wool Suit',
+                    brand: null,
+                    productUrl: 'https://www.nordstrom.com/s/navy-wool-suit/1111111',
+                    // Even though the response happens to carry an imageUrl (legacy/compatibility
+                    // field only - see backend docs), the UI must never render it.
+                    imageUrl: 'https://www.nordstrom.com/images/navy-wool-suit.jpg',
+                    price: null,
+                    originalPrice: null,
+                    currency: null,
+                    priceVerified: false,
+                    color: null,
+                    requestedSize: 'M',
+                    availableSizes: [],
+                    sizeVerified: false,
+                    stockText: null,
+                    availabilityVerified: false,
+                    audience: 'MEN',
+                    requestedItemPhrase: null,
+                    requestedItemGenericCategory: null,
+                    sourceCitation: 'OpenAI web_search url_citation',
+                    displayOrder: 0,
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    const { container } = renderPage();
+
+    await screen.findByText('Navy Wool Suit');
+
+    // No <img> element anywhere in the live recommendation section, and no accessible
+    // "no image available" placeholder region either - text-only, no reserved image space.
+    expect(screen.queryAllByRole('img')).toHaveLength(0);
+    expect(container.querySelector('img')).toBeNull();
+    expect(screen.queryByText(/No image available/)).not.toBeInTheDocument();
+
+    // The reliable fields still render: title, readable category, audience, and a safe link.
+    expect(screen.getByText('Navy Wool Suit')).toBeInTheDocument();
+    // "Suit" also appears in the interpretation's required-categories chip list, hence AllBy.
+    expect(screen.getAllByText('Suit').length).toBeGreaterThan(0);
+    expect(screen.getByText('Men')).toBeInTheDocument();
+    const link = screen.getByText('View on Nordstrom').closest('a');
+    expect(link).toHaveAttribute('href', 'https://www.nordstrom.com/s/navy-wool-suit/1111111');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('renders the requested item phrase alongside the product title and category when the item fulfills an explicit requested item', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return Promise.resolve(
+          liveRecommendationsWithResultsResponse({
+            foundCategories: [],
+            missingCategories: [],
+            recommendations: [
+              {
+                id: '55555555-5555-5555-5555-555555555555',
+                eventId: EVENT_ID,
+                generation: 1,
+                rank: 1,
+                name: 'Live Look 1',
+                status: 'ACTIVE',
+                source: 'LIVE_NORDSTROM',
+                explanation: null,
+                generatedAt: '2026-07-28T12:00:00Z',
+                items: [
+                  {
+                    id: 'outfit-item-1',
+                    category: null,
+                    retailer: 'NORDSTROM',
+                    title: 'USA Soccer Jersey',
+                    brand: null,
+                    productUrl: 'https://www.nordstrom.com/s/usa-soccer-jersey/1111111',
+                    imageUrl: null,
+                    price: null,
+                    originalPrice: null,
+                    currency: null,
+                    priceVerified: false,
+                    color: null,
+                    requestedSize: 'M',
+                    availableSizes: [],
+                    sizeVerified: false,
+                    stockText: null,
+                    availabilityVerified: false,
+                    audience: 'UNISEX',
+                    requestedItemPhrase: 'USA soccer jersey',
+                    requestedItemGenericCategory: 'TOP',
+                    sourceCitation: 'OpenAI web_search url_citation',
+                    displayOrder: 0,
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    renderPage();
+
+    await screen.findByText('USA Soccer Jersey');
+    expect(screen.getByText('USA soccer jersey')).toBeInTheDocument();
+    expect(screen.getByText('Top')).toBeInTheDocument();
+    expect(screen.getByText('Unisex')).toBeInTheDocument();
+    expect(screen.queryAllByRole('img')).toHaveLength(0);
+  });
+
+  it('shows structured loading skeletons matching the card shape while recommendations are loading', async () => {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        return new Promise(() => {});
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    const { container } = renderPage();
+
+    await screen.findByText('Loading live Nordstrom recommendations…');
+    expect(container.querySelectorAll('.MuiSkeleton-root').length).toBeGreaterThan(0);
+    // The loading skeleton is text-only, never an image-shaped rectangle.
+    expect(container.querySelector('.MuiSkeleton-rectangular')).toBeNull();
+  });
+
+  it('shows a stale warning with a "Generate updated looks" action instead of presenting old boards as current, without clearing them', async () => {
+    let resolveStatus: (value: Response) => void = () => {};
+    let recommendationsCallCount = 0;
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = input.toString();
+      if (url.includes('/recommendations/live/generate')) {
+        return Promise.resolve(generateJobAcceptedResponse());
+      }
+      if (url.includes('/recommendations/live/status')) {
+        return new Promise((resolve) => {
+          resolveStatus = resolve;
+        });
+      }
+      if (url.includes('/interpretation')) {
+        return Promise.resolve(interpretationResponse());
+      }
+      if (url.includes('/weather')) {
+        return Promise.resolve(weatherAvailableResponse());
+      }
+      if (url.includes('/recommendations')) {
+        recommendationsCallCount += 1;
+        return Promise.resolve(
+          recommendationsCallCount === 1
+            ? liveRecommendationsWithResultsResponse({ stale: true })
+            : liveRecommendationsWithResultsResponse({ generation: 2 }),
+        );
+      }
+      if (url.includes('/preferences')) {
+        return Promise.resolve(notFoundResponse());
+      }
+      return Promise.resolve(eventResponse());
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText('These recommendations were generated from older preferences.')).toBeInTheDocument();
+    // The stale boards remain visible - they are never cleared until a new request succeeds.
+    expect(screen.getByText('Live Look 1')).toBeInTheDocument();
+
+    await user.click(screen.getByText('Generate updated looks'));
+    expect(await screen.findByText('Searching nordstrom.com…')).toBeInTheDocument();
+    // Previously-shown boards stay visible while the new request is in flight.
+    expect(screen.getByText('Live Look 1')).toBeInTheDocument();
+
+    resolveStatus(jobStatusResponse('COMPLETED', { generation: 2 }));
+    await waitFor(() => expect(screen.queryByText('These recommendations were generated from older preferences.')).not.toBeInTheDocument());
   });
 });
 
