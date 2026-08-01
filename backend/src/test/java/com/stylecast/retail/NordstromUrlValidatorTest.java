@@ -56,4 +56,21 @@ class NordstromUrlValidatorTest {
 
         assertThat(a).isEqualTo(b);
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"nordstrom.com", "www.nordstrom.com", "shop.nordstrom.com"})
+    void isAllowedHost_acceptsNordstromComAndSubdomains(String host) {
+        assertThat(NordstromUrlValidator.isAllowedHost(host)).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"nordstrommedia.com", "n.nordstrommedia.com", "evilnordstrom.com", "nordstrom.com.evil.com"})
+    void isAllowedHost_rejectsOtherHosts(String host) {
+        assertThat(NordstromUrlValidator.isAllowedHost(host)).isFalse();
+    }
+
+    @Test
+    void isAllowedHost_rejectsNull() {
+        assertThat(NordstromUrlValidator.isAllowedHost(null)).isFalse();
+    }
 }

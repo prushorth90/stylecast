@@ -9,6 +9,7 @@ import com.stylecast.occasion.OccasionInterpretationRepository;
 import com.stylecast.recommendation.LiveOutfitRecommendation;
 import com.stylecast.recommendation.LiveOutfitRecommendationRepository;
 import com.stylecast.recommendation.LiveRecommendationCompleteness;
+import com.stylecast.testsupport.NoExternalNetworkGuardConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,12 +18,16 @@ import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRe
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -48,11 +53,26 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code RetailProductSearchProvider} is wired here) - tests that need an
  * existing live recommendation row seed one directly via the repository,
  * since saving preferences must never trigger a live search regardless.
+ * {@code POST .../interpretation/regenerate} DOES exercise occasion
+ * classification, though - {@link #forceNoRealOpenAiCalls} unconditionally
+ * overrides the OpenAI base URL/key at the highest property-source
+ * precedence (above OS environment variables) so it always falls back to
+ * {@code RuleBasedOccasionClassifier} deterministically, regardless of the
+ * environment running these tests; {@link NoExternalNetworkGuardConfig}
+ * additionally fails the test immediately if that override is ever lost.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureTestRestTemplate
 @Testcontainers
+@ActiveProfiles("test")
+@Import(NoExternalNetworkGuardConfig.class)
 class EventSetupFlowIntegrationTest {
+
+    @DynamicPropertySource
+    static void forceNoRealOpenAiCalls(DynamicPropertyRegistry registry) {
+        registry.add("stylecast.occasion-classifier.openai-api-key", () -> "");
+        registry.add("stylecast.occasion-classifier.base-url", () -> "http://localhost:1");
+    }
 
     @Container
     @ServiceConnection

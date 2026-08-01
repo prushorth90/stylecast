@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -101,6 +102,124 @@ class OpenAiNordstromProductSearchProviderTest {
         assertThat(candidate.description()).isNull();
         assertThat(candidate.availableSizes()).isEmpty();
         assertThat(candidate.availabilityVerified()).isFalse();
+    }
+
+    // --- Tolerating reasoning/web_search_call items preceding the final message ------
+
+    @Test
+    void extractCandidates_withReasoningItemBeforeMessage_stillNormalizesToCandidate() {
+        JsonNode response = MAPPER.readTree("""
+                {
+                  "status": "completed",
+                  "output": [
+                    {"type": "reasoning", "id": "rs_1"},
+                    {
+                      "type": "message",
+                      "content": [
+                        {
+                          "type": "output_text",
+                          "annotations": [
+                            {"type": "url_citation", "url": "https://www.nordstrom.com/s/navy-wedding-suit/1234567", "title": "Navy Wedding Suit"}
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+        List<RetailProductCandidate> candidates =
+                providerWithoutHttp(properties("key")).extractCandidates(response, request);
+
+        assertThat(candidates).hasSize(1);
+        assertThat(candidates.get(0).productUrl()).isEqualTo("https://www.nordstrom.com/s/navy-wedding-suit/1234567");
+    }
+
+    @Test
+    void extractCandidates_withWebSearchCallItemBeforeMessage_stillNormalizesToCandidate() {
+        JsonNode response = MAPPER.readTree("""
+                {
+                  "status": "completed",
+                  "output": [
+                    {"type": "web_search_call", "id": "ws_1", "status": "completed"},
+                    {
+                      "type": "message",
+                      "content": [
+                        {
+                          "type": "output_text",
+                          "annotations": [
+                            {"type": "url_citation", "url": "https://www.nordstrom.com/s/navy-wedding-suit/1234567", "title": "Navy Wedding Suit"}
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+        List<RetailProductCandidate> candidates =
+                providerWithoutHttp(properties("key")).extractCandidates(response, request);
+
+        assertThat(candidates).hasSize(1);
+        assertThat(candidates.get(0).productUrl()).isEqualTo("https://www.nordstrom.com/s/navy-wedding-suit/1234567");
+    }
+
+    @Test
+    void extractCandidates_withMultipleReasoningAndWebSearchCallItemsBeforeMessage_stillNormalizesToCandidate() {
+        // Mirrors a real observed shape: reasoning, web_search_call, reasoning, web_search_call,
+        // reasoning, web_search_call, then finally the message - output[0] is never assumed to
+        // be the final message, and none of the preceding tool/reasoning items are treated as errors.
+        JsonNode response = MAPPER.readTree("""
+                {
+                  "status": "completed",
+                  "output": [
+                    {"type": "reasoning", "id": "rs_1"},
+                    {"type": "web_search_call", "id": "ws_1", "status": "completed"},
+                    {"type": "reasoning", "id": "rs_2"},
+                    {"type": "web_search_call", "id": "ws_2", "status": "completed"},
+                    {"type": "reasoning", "id": "rs_3"},
+                    {"type": "web_search_call", "id": "ws_3", "status": "completed"},
+                    {
+                      "type": "message",
+                      "content": [
+                        {
+                          "type": "output_text",
+                          "annotations": [
+                            {"type": "url_citation", "url": "https://www.nordstrom.com/s/navy-wedding-suit/1234567", "title": "Navy Wedding Suit"}
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+        List<RetailProductCandidate> candidates =
+                providerWithoutHttp(properties("key")).extractCandidates(response, request);
+
+        assertThat(candidates).hasSize(1);
+        assertThat(candidates.get(0).productUrl()).isEqualTo("https://www.nordstrom.com/s/navy-wedding-suit/1234567");
+    }
+
+    @Test
+    void extractCandidates_completedStatusWithNoMessageOrOutputText_returnsEmptyListCleanly() {
+        // "Fails clearly" for this provider means a clean, non-throwing empty result (the
+        // established "zero candidates is a normal, valid outcome" contract) - never a crash,
+        // and never a fabricated candidate.
+        JsonNode response = MAPPER.readTree("""
+                {
+                  "status": "completed",
+                  "output": [
+                    {"type": "reasoning", "id": "rs_1"},
+                    {"type": "web_search_call", "id": "ws_1", "status": "completed"}
+                  ]
+                }
+                """);
+
+        List<RetailProductCandidate> candidates =
+                providerWithoutHttp(properties("key")).extractCandidates(response, request);
+
+        assertThat(candidates).isEmpty();
     }
 
     @Test
@@ -472,7 +591,7 @@ class OpenAiNordstromProductSearchProviderTest {
                 "Acme", "Verified", new java.math.BigDecimal("100.00"), null, "USD", null, null, List.of(), null, null);
         enricher.results.put(first.productUrl(), details);
         enricher.results.put(second.productUrl(), details);
-        RetailSearchProperties boundToOne = new RetailSearchProperties("key", "gpt-4.1", "http://localhost:1", 2000, 5000, 25, 1);
+        RetailSearchProperties boundToOne = new RetailSearchProperties("key", "test-model", "http://localhost:1", 2000, 5000, 25, 1);
 
         List<RetailProductCandidate> result =
                 providerWithoutHttp(boundToOne, enricher).enrichCandidates(List.of(first, second), TargetAudience.NO_PREFERENCE);
@@ -532,6 +651,97 @@ class OpenAiNordstromProductSearchProviderTest {
     }
 
     @Test
+    void search_whenFakeServerReturnsCompletedResponseWithReasoningAndWebSearchCallsBeforeMessage_succeeds() throws IOException {
+        // Mirrors the real observed shape (reasoning, web_search_call x3, then message) end to
+        // end through the real search() entry point, not just extractCandidates() directly.
+        String body = """
+                {
+                  "status": "completed",
+                  "output": [
+                    {"type": "reasoning", "id": "rs_1"},
+                    {"type": "web_search_call", "id": "ws_1", "status": "completed"},
+                    {"type": "reasoning", "id": "rs_2"},
+                    {"type": "web_search_call", "id": "ws_2", "status": "completed"},
+                    {"type": "reasoning", "id": "rs_3"},
+                    {"type": "web_search_call", "id": "ws_3", "status": "completed"},
+                    {
+                      "type": "message",
+                      "content": [
+                        {
+                          "type": "output_text",
+                          "annotations": [
+                            {"type": "url_citation", "url": "https://www.nordstrom.com/s/navy-wedding-suit/1234567", "title": "Navy Wedding Suit"}
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String baseUrl = startFakeServer(200, body);
+        OpenAiNordstromProductSearchProvider provider = providerWithoutHttp(properties("test-key", baseUrl));
+
+        RetailProductSearchResult result = provider.search(request);
+
+        assertThat(result.candidates()).hasSize(1);
+        assertThat(result.candidates().get(0).productUrl())
+                .isEqualTo("https://www.nordstrom.com/s/navy-wedding-suit/1234567");
+    }
+
+    @Test
+    void search_whenFakeServerReturnsCompletedResponseWithNoOutputText_returnsNoCandidatesRatherThanThrowing() throws IOException {
+        String body = """
+                {
+                  "status": "completed",
+                  "output": [
+                    {"type": "reasoning", "id": "rs_1"},
+                    {"type": "web_search_call", "id": "ws_1", "status": "completed"}
+                  ]
+                }
+                """;
+        String baseUrl = startFakeServer(200, body);
+        OpenAiNordstromProductSearchProvider provider = providerWithoutHttp(properties("test-key", baseUrl));
+
+        RetailProductSearchResult result = provider.search(request);
+
+        assertThat(result.candidates()).isEmpty();
+    }
+
+    @Test
+    void search_withLongerConfiguredReadTimeout_succeedsDespiteMultiStepReasoningLatency() throws IOException {
+        // Directly demonstrates why the default read timeout was raised: a response that takes
+        // several seconds (simulating multiple internal reasoning/web_search_call round trips)
+        // must not be treated as a provider failure when the configured timeout allows for it.
+        String body = """
+                {
+                  "status": "completed",
+                  "output": [
+                    {"type": "reasoning", "id": "rs_1"},
+                    {"type": "web_search_call", "id": "ws_1", "status": "completed"},
+                    {
+                      "type": "message",
+                      "content": [
+                        {
+                          "type": "output_text",
+                          "annotations": [
+                            {"type": "url_citation", "url": "https://www.nordstrom.com/s/navy-wedding-suit/1234567", "title": "Navy Wedding Suit"}
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String baseUrl = startSlowFakeServer(3000, body);
+        RetailSearchProperties longReadTimeoutProperties =
+                new RetailSearchProperties("test-key", "test-model", baseUrl, 5000, 60000, 25, 4);
+        OpenAiNordstromProductSearchProvider provider = providerWithoutHttp(longReadTimeoutProperties);
+
+        RetailProductSearchResult result = provider.search(request);
+
+        assertThat(result.candidates()).hasSize(1);
+    }
+    @Test
     void search_whenFakeServerReturnsErrorStatus_throwsProviderException() throws IOException {
         String baseUrl = startFakeServer(500, "{\"error\": {\"message\": \"internal error\"}}");
         OpenAiNordstromProductSearchProvider provider = providerWithoutHttp(properties("test-key", baseUrl));
@@ -554,11 +764,28 @@ class OpenAiNordstromProductSearchProviderTest {
         String baseUrl = startSlowFakeServer(2000);
         // Read timeout much shorter than the server's artificial delay above.
         RetailSearchProperties shortTimeoutProperties = new RetailSearchProperties(
-                "test-key", "gpt-4.1", baseUrl, 200, 200, 25, 4);
+                "test-key", "test-model", baseUrl, 200, 200, 25, 4);
         OpenAiNordstromProductSearchProvider provider = providerWithoutHttp(shortTimeoutProperties);
 
         assertThatThrownBy(() -> provider.search(request))
                 .isInstanceOf(ProductSearchProviderException.class);
+    }
+
+    @Test
+    void search_sendsTheConfiguredModel_neverAHardcodedOrSdkDefault() throws IOException {
+        AtomicReference<String> capturedRequestBody = new AtomicReference<>();
+        String baseUrl = startFakeServerCapturingRequestBody(200, """
+                {"status": "completed", "output": []}
+                """, capturedRequestBody);
+        // A deliberately distinctive value (not a real model name) - proves the request really
+        // carries whatever is configured, rather than a hardcoded literal or an SDK default.
+        OpenAiNordstromProductSearchProvider provider =
+                providerWithoutHttp(new RetailSearchProperties("test-key", "custom-configured-model", baseUrl, 2000, 5000, 25, 4));
+
+        provider.search(request);
+
+        JsonNode sentBody = MAPPER.readTree(capturedRequestBody.get());
+        assertThat(sentBody.path("model").asString(null)).isEqualTo("custom-configured-model");
     }
 
     private RetailSearchProperties properties(String apiKey) {
@@ -566,7 +793,7 @@ class OpenAiNordstromProductSearchProviderTest {
     }
 
     private RetailSearchProperties properties(String apiKey, String baseUrl) {
-        return new RetailSearchProperties(apiKey, "gpt-4.1", baseUrl, 2000, 5000, 25, 4);
+        return new RetailSearchProperties(apiKey, "test-model", baseUrl, 2000, 5000, 25, 4);
     }
 
     private String startFakeServer(int status, String responseBody) throws IOException {
@@ -582,7 +809,25 @@ class OpenAiNordstromProductSearchProviderTest {
         return "http://localhost:" + fakeServer.getAddress().getPort();
     }
 
+    private String startFakeServerCapturingRequestBody(int status, String responseBody, AtomicReference<String> captured) throws IOException {
+        fakeServer = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
+        fakeServer.createContext("/responses", exchange -> {
+            captured.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        fakeServer.start();
+        return "http://localhost:" + fakeServer.getAddress().getPort();
+    }
+
     private String startSlowFakeServer(long delayMs) throws IOException {
+        return startSlowFakeServer(delayMs, "{\"status\": \"completed\", \"output\": []}");
+    }
+
+    private String startSlowFakeServer(long delayMs, String responseBody) throws IOException {
         fakeServer = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         fakeServer.createContext("/responses", exchange -> {
             try {
@@ -590,7 +835,7 @@ class OpenAiNordstromProductSearchProviderTest {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            byte[] bytes = "{\"status\": \"completed\", \"output\": []}".getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, bytes.length);
             exchange.getResponseBody().write(bytes);

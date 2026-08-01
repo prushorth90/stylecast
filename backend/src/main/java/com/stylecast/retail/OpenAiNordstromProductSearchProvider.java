@@ -9,8 +9,6 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientRequestException;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.netty.http.client.HttpClient;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -182,40 +180,61 @@ public class OpenAiNordstromProductSearchProvider implements RetailProductSearch
     }
 
     private JsonNode callOpenAi(ObjectNode requestBody) {
-        String responseBody;
+        Instant start = Instant.now();
+        ExchangeResult exchangeResult;
         try {
-            responseBody = webClient.post()
+            exchangeResult = webClient.post()
                     .uri("/responses")
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.openaiApiKey())
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(requestBody)
-                    .retrieve()
-                    .bodyToMono(String.class)
+                    .exchangeToMono(response -> response.bodyToMono(String.class)
+                            .defaultIfEmpty("")
+                            .map(body -> new ExchangeResult(response.statusCode().value(), body)))
                     .block(Duration.ofMillis(properties.connectTimeoutMs() + properties.readTimeoutMs()));
-        } catch (WebClientResponseException e) {
-            // Never log the API key or the full request/response body - only status.
-            log.warn("Retail product search provider returned HTTP {}", e.getStatusCode());
-            throw new ProductSearchProviderException(
-                    "Nordstrom product search provider returned an error: HTTP " + e.getStatusCode(), e);
-        } catch (WebClientRequestException e) {
-            log.warn("Retail product search provider request failed: {}", e.getClass().getSimpleName());
-            throw new ProductSearchProviderException("Nordstrom product search provider request failed", e);
         } catch (RuntimeException e) {
             // Covers timeouts (Mono#block(Duration) throws IllegalStateException when the
-            // deadline elapses) and any other unexpected failure invoking the provider.
-            log.warn("Retail product search provider call failed: {}", e.getClass().getSimpleName());
+            // deadline elapses, and Reactor Netty's own connect/response timeouts surface as
+            // WebClientRequestException before a response is ever received) and any other
+            // unexpected failure invoking the provider. Never logs the API key or request body.
+            log.warn("Retail product search provider call failed: model={}, elapsedMs={}, error={}",
+                    properties.openaiModel(), elapsedMs(start), e.getClass().getSimpleName());
             throw new ProductSearchProviderException("Nordstrom product search provider call failed", e);
         }
 
-        if (responseBody == null) {
+        long elapsedMs = elapsedMs(start);
+        if (exchangeResult == null || exchangeResult.body().isEmpty()) {
+            log.warn("Retail product search provider returned an empty response: model={}, elapsedMs={}",
+                    properties.openaiModel(), elapsedMs);
             throw new ProductSearchProviderException("Nordstrom product search provider returned an empty response");
         }
+        if (exchangeResult.httpStatus() < 200 || exchangeResult.httpStatus() >= 300) {
+            log.warn("Retail product search provider returned HTTP {}: model={}, elapsedMs={}",
+                    exchangeResult.httpStatus(), properties.openaiModel(), elapsedMs);
+            throw new ProductSearchProviderException(
+                    "Nordstrom product search provider returned an error: HTTP " + exchangeResult.httpStatus());
+        }
 
+        JsonNode responseJson;
         try {
-            return objectMapper.readTree(responseBody);
+            responseJson = objectMapper.readTree(exchangeResult.body());
         } catch (JacksonException e) {
+            log.warn("Retail product search provider returned malformed JSON: model={}, elapsedMs={}",
+                    properties.openaiModel(), elapsedMs);
             throw new ProductSearchProviderException("Nordstrom product search provider returned malformed JSON", e);
         }
+
+        log.info("Retail product search provider call succeeded: model={}, httpStatus={}, elapsedMs={}, openAiStatus={}",
+                properties.openaiModel(), exchangeResult.httpStatus(), elapsedMs, responseJson.path("status").asString(null));
+        return responseJson;
+    }
+
+    private long elapsedMs(Instant start) {
+        return Duration.between(start, Instant.now()).toMillis();
+    }
+
+    /** Raw HTTP status + body captured before any JSON parsing, so the actual status can be logged even for a non-2xx response. */
+    private record ExchangeResult(int httpStatus, String body) {
     }
 
     // Package-private (rather than private) so OpenAiNordstromProductSearchProviderTest
@@ -234,11 +253,18 @@ public class OpenAiNordstromProductSearchProvider implements RetailProductSearch
 
         JsonNode output = responseJson.path("output");
         if (!output.isArray()) {
+            log.info("Retail product search response had no output array: model={}, openAiStatus={}", properties.openaiModel(), status);
             return List.of();
         }
 
+        List<String> outputItemTypes = new ArrayList<>();
+        boolean outputTextFound = false;
         List<RawCitation> citations = new ArrayList<>();
         for (JsonNode item : output) {
+            outputItemTypes.add(item.path("type").asString("unknown"));
+            // Every item type other than "message" (e.g. "reasoning", "web_search_call") is
+            // intentionally ignored here, never treated as an error - the final answer can be
+            // preceded by any number of them, and output[0] is never assumed to be the message.
             if (!"message".equals(item.path("type").asString(null))) {
                 continue;
             }
@@ -250,6 +276,7 @@ public class OpenAiNordstromProductSearchProvider implements RetailProductSearch
                 if (!"output_text".equals(contentItem.path("type").asString(null))) {
                     continue;
                 }
+                outputTextFound = true;
                 JsonNode annotations = contentItem.path("annotations");
                 if (!annotations.isArray()) {
                     continue;
@@ -266,6 +293,9 @@ public class OpenAiNordstromProductSearchProvider implements RetailProductSearch
                 }
             }
         }
+
+        log.info("Retail product search output parsed: model={}, openAiStatus={}, outputItemTypes={}, outputTextFound={}, citationsFound={}",
+                properties.openaiModel(), status, outputItemTypes, outputTextFound, citations.size());
 
         Instant retrievedAt = Instant.now();
         Map<String, RetailProductCandidate> byCanonicalUrl = new LinkedHashMap<>();

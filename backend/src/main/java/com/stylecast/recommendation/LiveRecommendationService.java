@@ -13,6 +13,8 @@ import com.stylecast.retail.RetailProductCandidate;
 import com.stylecast.retail.RetailProductSearchRequest;
 import com.stylecast.retail.RetailProductSearchService;
 import com.stylecast.retail.RetailProductSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -72,6 +74,8 @@ import java.util.stream.Collectors;
 @Service
 public class LiveRecommendationService {
 
+    private static final Logger log = LoggerFactory.getLogger(LiveRecommendationService.class);
+
     private final RecommendationContextLoader contextLoader;
     private final LiveCategorySearchRequestFactory requestFactory;
     private final RequestedItemSearchRequestFactory requestedItemRequestFactory;
@@ -92,6 +96,22 @@ public class LiveRecommendationService {
         this.retailSearchService = retailSearchService;
         this.assembler = assembler;
         this.repository = repository;
+    }
+
+    /**
+     * Validates that {@code eventId} exists and has both saved styling
+     * preferences and an occasion interpretation, WITHOUT performing any
+     * live search - throws the same {@link com.stylecast.event.EventNotFoundException}
+     * (404)/{@link MissingStylePreferencesException} (409)/{@link
+     * MissingOccasionInterpretationException} (409) that {@link #generate}
+     * would, but fast (no OpenAI call). Used by {@link
+     * LiveRecommendationJobService#startGenerateJob} so an invalid request
+     * is rejected synchronously rather than only surfacing as a later
+     * {@link LiveGenerationJobStatus#FAILED} job.
+     */
+    @Transactional(readOnly = true)
+    public void validatePrerequisites(UUID eventId) {
+        contextLoader.load(eventId);
     }
 
     /**
@@ -453,6 +473,8 @@ public class LiveRecommendationService {
             String requestedSize = sizeResolver.apply(selected);
             if (selected.requestedItem() != null) {
                 RequestedItem requestedItem = selected.requestedItem();
+                log.debug("Persisting recommendation item: productUrl={}, persistedImageUrlPresent={}",
+                        candidate.productUrl(), candidate.imageUrl() != null);
                 recommendation.addItem(new LiveOutfitItem(
                         UUID.randomUUID(), requestedItem.id(), requestedItem.originalPhrase(), requestedItem.genericCategory(),
                         candidate.retailer(), candidate.title(), candidate.brand(), candidate.productUrl(), candidate.imageUrl(),
@@ -461,6 +483,8 @@ public class LiveRecommendationService {
                         candidate.stockText(), candidate.availabilityVerified(), candidate.audience(), candidate.sourceCitation(),
                         displayOrder++, now));
             } else {
+                log.debug("Persisting recommendation item: productUrl={}, persistedImageUrlPresent={}",
+                        candidate.productUrl(), candidate.imageUrl() != null);
                 recommendation.addItem(new LiveOutfitItem(
                         UUID.randomUUID(), selected.category(), candidate.retailer(), candidate.title(), candidate.brand(),
                         candidate.productUrl(), candidate.imageUrl(), candidate.price(), candidate.originalPrice(),
@@ -555,7 +579,7 @@ public class LiveRecommendationService {
                 eventId, generation, summary.getGeneratedAt(), summary.getCompleteness(),
                 summary.getFoundCategories(), summary.getMissingCategories(),
                 summary.getFoundRequestedItems(), summary.getMissingRequestedItems(),
-                summary.getMessage(), recommendations);
+                summary.getMessage(), recommendations, summary.isStale());
     }
 
     private LiveOutfitRecommendationResponse toResponse(LiveOutfitRecommendation recommendation) {
@@ -574,6 +598,8 @@ public class LiveRecommendationService {
     }
 
     private LiveOutfitItemResponse toResponse(LiveOutfitItem item) {
+        log.debug("Mapping recommendation item to API DTO: productUrl={}, apiDtoImageUrlPresent={}",
+                item.getProductUrl(), item.getImageUrl() != null);
         return new LiveOutfitItemResponse(
                 item.getId(),
                 item.getCategory(),

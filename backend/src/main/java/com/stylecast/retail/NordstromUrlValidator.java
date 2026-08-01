@@ -51,13 +51,27 @@ public final class NordstromUrlValidator {
         if (!"https".equalsIgnoreCase(scheme)) {
             return false;
         }
-        String lowerHost = host.toLowerCase(Locale.ROOT);
-        boolean allowedHost = lowerHost.equals(ROOT_DOMAIN) || lowerHost.endsWith(ALLOWED_SUBDOMAIN_SUFFIX);
-        if (!allowedHost) {
+        if (!isAllowedHost(host)) {
             return false;
         }
         return PRODUCT_PATH.matcher(path).matches();
     }
+
+    /**
+     * @return {@code true} if {@code host} is exactly {@code nordstrom.com}
+     * or a subdomain of it - the shared domain-membership check used both
+     * by {@link #isValidNordstromProductUrl} and by anything that needs to
+     * confirm a redirect target (e.g. a bounded page-metadata fetch)
+     * hasn't left the Nordstrom website domain.
+     */
+    public static boolean isAllowedHost(String host) {
+        if (host == null) {
+            return false;
+        }
+        String lowerHost = host.toLowerCase(Locale.ROOT);
+        return lowerHost.equals(ROOT_DOMAIN) || lowerHost.endsWith(ALLOWED_SUBDOMAIN_SUFFIX);
+    }
+
 
     /**
      * Canonicalizes a URL already known to pass {@link #isValidNordstromProductUrl}

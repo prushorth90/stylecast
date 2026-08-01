@@ -31,6 +31,18 @@ services:
       # POST /api/dev/retail-products/search. The app starts and runs
       # normally without it.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Optional model overrides for the two OpenAI-backed features (live
+      # Nordstrom search/product-detail enrichment and occasion
+      # classification) - default to gpt-4.1 via application.yml when
+      # unset, so these are only needed to override that default.
+      OPENAI_RETAIL_SEARCH_MODEL: ${OPENAI_RETAIL_SEARCH_MODEL:-gpt-4.1}
+      OCCASION_CLASSIFIER_MODEL: ${OCCASION_CLASSIFIER_MODEL:-gpt-4.1}
+      # Optional timeout overrides for the retail-search/product-detail-
+      # enrichment OpenAI calls - default via application.yml (connect 5s,
+      # read 60s, since a real web-search response can involve several
+      # internal reasoning/web_search_call steps before the final message).
+      RETAIL_SEARCH_CONNECT_TIMEOUT_MS: ${RETAIL_SEARCH_CONNECT_TIMEOUT_MS:-5000}
+      RETAIL_SEARCH_READ_TIMEOUT_MS: ${RETAIL_SEARCH_READ_TIMEOUT_MS:-60000}
     ports:
       - "8080:8080"
     depends_on:

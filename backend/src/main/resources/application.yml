@@ -26,7 +26,11 @@ stylecast:
     openai-model: ${OPENAI_RETAIL_SEARCH_MODEL:gpt-4.1}
     base-url: ${OPENAI_API_BASE_URL:https://api.openai.com/v1}
     connect-timeout-ms: ${RETAIL_SEARCH_CONNECT_TIMEOUT_MS:5000}
-    read-timeout-ms: ${RETAIL_SEARCH_READ_TIMEOUT_MS:15000}
+    # A real web-search-enabled response can involve several internal
+    # reasoning/web_search_call steps before the final message (observed:
+    # ~12s for 3 web_search_call round trips) - 60s gives real multi-step
+    # responses headroom without waiting indefinitely.
+    read-timeout-ms: ${RETAIL_SEARCH_READ_TIMEOUT_MS:60000}
     max-result-limit: ${RETAIL_SEARCH_MAX_RESULTS:25}
     # Bounds how many candidates per category search get an extra
     # OpenAiProductDetailEnricher call - keeps the added latency/cost of

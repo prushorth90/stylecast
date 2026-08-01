@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { Link as RouterLink, useParams } from 'react-router-dom';
 import { EventSetupModal } from '../components/events/EventSetupModal';
 import { EventOccasionCard } from '../components/styling/EventOccasionCard';
-import { EventLiveRecommendationsCard } from '../components/styling/EventLiveRecommendationsCard';
+import { LiveRecommendationSection } from '../components/styling/recommendations/LiveRecommendationSection';
 import { EventWeatherCard } from '../components/styling/EventWeatherCard';
 import { useEvent } from '../hooks/useEvents';
 import { useEventOccasionInterpretation } from '../hooks/useEventOccasion';
@@ -141,7 +141,7 @@ export function EventStylePage() {
       )}
 
       {event.id && (
-        <EventLiveRecommendationsCard
+        <LiveRecommendationSection
           eventId={event.id}
           recommendations={recommendations}
           isLoading={isRecommendationsPending}

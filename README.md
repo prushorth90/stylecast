@@ -6,8 +6,12 @@ Users select an event from Google Calendar or create an event manually.
 StyleCast combines the occasion, dress code, event location, event time,
 weather, budget, sizing, and style preferences to recommend complete outfits.
 
-Outfits are displayed as Pinterest-inspired mood boards containing products
-from the StyleCast product catalog.
+Live Nordstrom recommendations are presented as compact, link-based
+recommended product sets - product images, current prices, sizes, colors,
+and availability are confirmed directly on nordstrom.com, not shown in the
+app (no authorized live product-image/price feed is available yet). The
+separate demo catalog (fictional, locally seeded products) may include
+richer, image-based cards with locally-controlled metadata.
 
 ## Current status
 
@@ -81,6 +85,13 @@ Implemented so far:
   these take priority over the occasion interpretation's broad required
   categories when generating live searches, activity-agnostically (no new
   enum per sport). See "Explicit requested items" below.
+- Live Nordstrom recommendations are link-based (Task 9): the event styling
+  page presents live-Nordstrom recommendations as compact, text-based
+  recommended product sets (complete/partial/no-results/provider-
+  unavailable/stale states, a single Nordstrom verification notice, and a
+  "View on Nordstrom" link per product - no product images) rather than
+  the earlier temporary summary cards. See "Live Nordstrom recommendations
+  are link-based" below.
 
 ### Live retail product search (development)
 
@@ -377,31 +388,100 @@ interpretation exist returns HTTP 409.
 - **Price, size, and availability are only ever shown when independently
   confirmed:** after finding a valid `nordstrom.com` product URL, StyleCast
   attempts a bounded, narrowly-scoped **product-detail enrichment** step -
-  a second OpenAI Responses API call (still using the same `web_search`
-  tool restricted to `nordstrom.com`, never a direct fetch of the
-  Nordstrom page - see "Retail boundaries" below) that reports brand,
-  name, current/original price, currency, image, color, sizes, stock
-  text, and department **only if the response actually cites the exact
-  requested product URL** and the value passes basic sanity validation.
+  one OpenAI Responses API call (still using the same `web_search` tool
+  restricted to `nordstrom.com`, never a direct fetch of the Nordstrom
+  page - see "Retail boundaries" below) that reports brand, name,
+  current/original price, currency, color, sizes, stock text, and
+  department **only if the response actually cites the exact requested
+  product URL** and the value passes basic sanity validation.
+  **Live Nordstrom products never have an image**: no authorized product
+  feed is available yet (see docs/ROADMAP.md), so StyleCast does not fetch
+  Nordstrom product pages, parse JSON-LD/`og:image`/Twitter Card/gallery
+  image metadata, or make a second OpenAI request to find one - `imageUrl`
+  stays `null` for every new live item and the frontend never renders an
+  image or a placeholder for one (see "Live Nordstrom recommendations are
+  link-based" below). `imageUrl` remains a nullable field on the entity/DTO
+  purely for backward/database compatibility - no schema migration is
+  warranted just to drop it, and the demo catalog's own images are
+  unaffected.
   `priceVerified`/`sizeVerified`/`availabilityVerified` are only ever
   `true` when a field survived that check; otherwise the field stays
-  `null`/empty and its flag stays `false` - the styling page renders no
-  price/size/availability chip at all in that case (never a repeated
-  generic "unverified" badge), shows a department/audience chip only when
-  one is actually known, and always shows a single top-level notice
-  ("Confirm current product details, sizes, prices, and availability on
-  Nordstrom.") once per card rather than repeating it per product. A
-  failed enrichment attempt never discards the underlying candidate, and
-  the number of enrichment calls per search is bounded
+  `null`/empty and its flag stays `false` - none of these fields (or their
+  verification flags), nor color, are ever rendered on the live styling
+  page at all; a department/audience label is shown when known, and a
+  single top-level notice ("Confirm current product details, sizes,
+  prices, and availability on Nordstrom.") appears once per recommendation
+  section rather than repeating it per product. A failed enrichment
+  attempt never discards the underlying candidate, and the number of
+  enrichment calls per search is bounded
   (`stylecast.retail-search.enrichment-max-candidates`).
-- Automated tests never call the real OpenAI API or nordstrom.com - a fake
+- **Automated tests use mocked providers and local fixtures only. They do
+  not make real OpenAI, Nordstrom, weather, or geocoding requests.** A fake
   `RetailProductSearchProvider`/`ProductDetailEnricher` bean, or hand-built
   JSON fixtures shaped like the OpenAI Responses API, are used everywhere
   (see backend test classes under `com.stylecast.recommendation` whose name
   starts with `Live`, and `com.stylecast.retail.OpenAiProductDetailEnricherTest`/
-  `CandidateAudienceClassifierTest`).
+  `CandidateAudienceClassifierTest`). See also `backend/src/test/resources/application-test.yml`
+  and `com.stylecast.testsupport.NoExternalNetworkGuardConfig`.
 
-### Outfit recommendations (local catalog)
+### Live Nordstrom recommendations are link-based
+
+The event styling page presents live-Nordstrom recommendations as compact,
+text-based recommended product sets (`LiveRecommendationSection` and the
+components under `frontend/src/components/styling/recommendations/`) - not
+image-based mood boards. No authorized live Nordstrom product-image feed is
+available yet (see docs/ROADMAP.md), so **product images, current prices,
+sizes, colors, and availability are never shown for a live Nordstrom
+product - they are confirmed directly on nordstrom.com** via each "View on
+Nordstrom" link. **Demo catalog products may continue to use richer,
+locally-controlled, image-based cards** (see `frontend/src/components/catalog/ProductCard.tsx`) -
+this only applies to `LIVE_NORDSTROM` recommendations.
+
+- **Complete product sets** show a green "Complete" badge and a "Live
+  Nordstrom" source badge. **Partial product sets** show an amber
+  "Partial" badge instead and only ever contain the items that were
+  actually found - a partial result is never presented as a complete
+  outfit.
+- **Found and missing items are always shown separately**, above the
+  product sets: a "Found" list (each entry linking to its real Nordstrom
+  product page when known) and a "Missing" list ("No matching Nordstrom
+  product found" per entry). Requested items always use the user's own
+  `originalPhrase` (e.g. "USA soccer jersey", "football boots"), never a
+  raw generic category name; category-only generations show the same
+  found/missing structure using formatted category labels.
+- **Each product renders as a compact, text-based card**: the requested
+  item phrase (when the item fulfills an explicit requested item), the
+  product title, a readable generic category, an audience/department chip
+  when known, and a "View on Nordstrom" link - never an image, image
+  placeholder, price, color, sizes, stock text, or a
+  price/size/availability verification chip. Every "View on Nordstrom"
+  link opens in a new tab with `target="_blank" rel="noopener noreferrer"`
+  and a descriptive accessible name.
+- **One verification notice** ("Confirm current product details, sizes,
+  prices, and availability on Nordstrom.") appears once per recommendation
+  section, never repeated per product set or per product.
+- **No-results** (`status: 'NO_RESULTS'`) and **provider-unavailable**
+  (`status: 'PROVIDER_UNAVAILABLE'`) are shown as distinct messages - the
+  live section never falls back to fictional demo products.
+- **Stale recommendations:** if the event's saved styling preferences or
+  occasion interpretation change after a generation was produced (see
+  `POST .../recommendations/live/invalidate-stale`, called by the event
+  setup modal), the response's `stale: true` flag is shown as a clear
+  warning ("These recommendations were generated from older preferences.")
+  with a "Generate updated looks" action - the previous product sets stay
+  visible (never cleared) until a new generation actually succeeds.
+- **Live vs. demo labeling:** every live product set is always labeled
+  "Live Nordstrom"; the source-badge mapping also supports a "Demo
+  catalog" label for the separate local-catalog engine below, so the two
+  are never visually or textually conflated if both are ever shown
+  together.
+- A structured, text-only loading skeleton (matching the eventual card
+  shape - never an image-shaped skeleton) is shown while recommendations
+  are loading or being generated - previously loaded, valid product sets
+  are never cleared while a new generate/retry request is in flight, only
+  replaced once it succeeds.
+
+
 
 `com.stylecast.recommendation` also deterministically assembles up to
 three complete outfits for an event from **the local product catalog
@@ -485,6 +565,20 @@ returns HTTP 409 with a clear message instead of guessing.
 - `docs/ROADMAP.md`
 
 ## Local development
+
+**Automated tests use mocked providers and local fixtures only. They do not
+make real OpenAI, Nordstrom, weather, or geocoding requests.** Backend
+HTTP-layer tests point at a local `com.sun.net.httpserver.HttpServer` fake
+(never `api.openai.com`/`nordstrom.com`/`open-meteo.com`); full-context
+Spring tests use `src/test/resources/application-test.yml` (an empty API
+key and unreachable-localhost base URLs by default) plus fake provider
+beans where a specific test needs one. `com.stylecast.testsupport.NoExternalNetworkGuardConfig`
+fails a test immediately if that safe configuration is ever lost, and the
+Maven Surefire plugin forces every test JVM to use safe environment
+variable values regardless of the launching shell's own environment (see
+`backend/pom.xml`). Frontend tests stub `fetch` globally in every test file
+and never start or depend on a real backend. No test requires
+`OPENAI_API_KEY`, other real credentials, or internet access.
 
 ### Backend
 

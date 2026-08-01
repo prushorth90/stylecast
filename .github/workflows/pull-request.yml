@@ -24,8 +24,33 @@ jobs:
           cache: maven
           cache-dependency-path: backend/pom.xml
 
+      - name: Scan test sources for accidental real external host usage
+        # Automated tests must never contact a real external host (OpenAI,
+        # Nordstrom, weather/geocoding providers). This is a static,
+        # best-effort check (grep, not runtime network monitoring) for the
+        # one pattern that would actually route a client at a real host:
+        # an HTTP client base URL literal pointed at one of them. See
+        # backend/src/test/resources/application-test.yml and
+        # com.stylecast.testsupport.NoExternalNetworkGuardConfig for the
+        # runtime-side guarantees.
+        run: |
+          set -e
+          if grep -RnE '\.baseUrl\("https://(api\.openai\.com|([a-zA-Z0-9.-]*\.)?nordstrom(media)?\.com|([a-zA-Z0-9.-]*\.)?open-meteo\.com)' backend/src/test/java; then
+            echo "::error::Test code appears to configure a real external base URL - tests must only ever target localhost/127.0.0.1/::1." >&2
+            exit 1
+          fi
+          if [ ! -f backend/src/test/resources/application-test.yml ]; then
+            echo "::error::backend/src/test/resources/application-test.yml is missing - the test profile with safe, local-only defaults must exist." >&2
+            exit 1
+          fi
+          echo "No real external host base URLs found in backend test sources; test profile present."
+
       - name: Run backend tests
         working-directory: backend
+        # No OPENAI_API_KEY (or any other external credential) is set for
+        # this job - tests must never require one. Automated tests use
+        # mocked providers and local fixtures only (see
+        # src/test/resources/application-test.yml).
         run: ./mvnw -B test
 
   frontend-checks:
@@ -46,6 +71,15 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Scan test sources for accidental real external fetch targets
+        run: |
+          set -e
+          if grep -RnE "fetch\(\s*['\"]https?://" frontend/src | grep -viE "localhost|127\.0\.0\.1|::1"; then
+            echo "::error::Frontend test/source code appears to call fetch() with a real absolute external URL - all API calls must be relative (/api/...) and mocked in tests." >&2
+            exit 1
+          fi
+          echo "No real external fetch() targets found in frontend source."
+
       - name: Lint
         working-directory: frontend
         run: npm run lint
@@ -56,6 +90,8 @@ jobs:
 
       - name: Test
         working-directory: frontend
+        # Every test file stubs global fetch (vi.stubGlobal('fetch', vi.fn()))
+        # - no real network access is made or required.
         run: npm run test
 
       - name: Build
