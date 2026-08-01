@@ -43,6 +43,11 @@ services:
       # internal reasoning/web_search_call steps before the final message).
       RETAIL_SEARCH_CONNECT_TIMEOUT_MS: ${RETAIL_SEARCH_CONNECT_TIMEOUT_MS:-5000}
       RETAIL_SEARCH_READ_TIMEOUT_MS: ${RETAIL_SEARCH_READ_TIMEOUT_MS:-60000}
+      # Whether the session cookie requires HTTPS (Secure flag). This local
+      # Docker Compose setup serves plain HTTP, so this defaults to false -
+      # a real HTTPS deployment must set this to true, or the browser will
+      # never send the cookie back at all.
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     ports:
       - "8080:8080"
     depends_on:

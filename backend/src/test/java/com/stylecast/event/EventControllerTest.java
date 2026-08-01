@@ -1,6 +1,7 @@
 package com.stylecast.event;
 
 import com.stylecast.common.error.ApiError;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +13,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import com.stylecast.testsupport.NoExternalNetworkGuardConfig;
+import com.stylecast.testsupport.TestAuthSupport;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -49,9 +51,21 @@ class EventControllerTest {
     @Autowired
     private EventRepository eventRepository;
 
+    private TestAuthSupport.InstalledAuth auth;
+
     @BeforeEach
     void cleanDatabase() {
         eventRepository.deleteAll();
+    }
+
+    @BeforeEach
+    void authenticate() {
+        auth = TestAuthSupport.installAuthenticatedUser(restTemplate, port);
+    }
+
+    @AfterEach
+    void clearAuthentication() {
+        TestAuthSupport.uninstall(restTemplate, auth);
     }
 
     private String url(String path) {
@@ -305,9 +319,83 @@ class EventControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
+    @Test
+    void getEvent_ownedByAnotherUser_returns404() {
+        TestAuthSupport.AuthenticatedTestUser otherUser = TestAuthSupport.registerAndLogin(restTemplate, port);
+        Event othersEvent = eventRepository.save(new Event(
+                UUID.randomUUID(),
+                otherUser.userId(),
+                "Someone else's event",
+                "Description",
+                "Some location",
+                OffsetDateTime.now().plusDays(1),
+                OffsetDateTime.now().plusDays(1).plusHours(1),
+                EventSetting.INDOOR,
+                "Casual",
+                Instant.now()));
+
+        ResponseEntity<ApiError> response = restTemplate.getForEntity(
+                url("/api/events/" + othersEvent.getId()), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void updateEvent_ownedByAnotherUser_returns404() {
+        TestAuthSupport.AuthenticatedTestUser otherUser = TestAuthSupport.registerAndLogin(restTemplate, port);
+        Event othersEvent = eventRepository.save(new Event(
+                UUID.randomUUID(),
+                otherUser.userId(),
+                "Someone else's event",
+                "Description",
+                "Some location",
+                OffsetDateTime.now().plusDays(1),
+                OffsetDateTime.now().plusDays(1).plusHours(1),
+                EventSetting.INDOOR,
+                "Casual",
+                Instant.now()));
+
+        ResponseEntity<ApiError> response = restTemplate.exchange(
+                url("/api/events/" + othersEvent.getId()),
+                org.springframework.http.HttpMethod.PUT,
+                jsonRequest(validRequestBody()),
+                ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(eventRepository.findById(othersEvent.getId()).orElseThrow().getTitle())
+                .isEqualTo("Someone else's event");
+    }
+
+    @Test
+    void listEvents_returnsOnlyTheCallingUsersEvents() {
+        OffsetDateTime start = OffsetDateTime.now().plusDays(1);
+        Event ownEvent = eventRepository.save(sampleEvent("My event", start, start.plusHours(1)));
+
+        TestAuthSupport.AuthenticatedTestUser otherUser = TestAuthSupport.registerAndLogin(restTemplate, port);
+        eventRepository.save(new Event(
+                UUID.randomUUID(),
+                otherUser.userId(),
+                "Someone else's event",
+                "Description",
+                "Some location",
+                start,
+                start.plusHours(1),
+                EventSetting.INDOOR,
+                "Casual",
+                Instant.now()));
+
+        ResponseEntity<EventResponseBody[]> response = restTemplate.getForEntity(
+                url("/api/events"), EventResponseBody[].class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        List<UUID> ids = List.of(response.getBody()).stream().map(EventResponseBody::id).toList();
+        assertThat(ids).containsExactly(ownEvent.getId());
+    }
+
     private Event sampleEvent(String title, OffsetDateTime start, OffsetDateTime end) {
         return new Event(
                 UUID.randomUUID(),
+                auth.userId(),
                 title,
                 "Description for " + title,
                 "Some location",

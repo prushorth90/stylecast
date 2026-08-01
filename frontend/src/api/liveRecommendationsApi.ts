@@ -1,4 +1,5 @@
 import { EventApiError, type ApiErrorBody } from './eventsApi';
+import { apiFetch } from './httpClient';
 import type { GenericItemCategory, ProductCategory } from './occasionApi';
 
 export type { GenericItemCategory };
@@ -167,7 +168,7 @@ async function parseErrorResponse(response: Response): Promise<never> {
  * event yet.
  */
 export async function fetchLiveEventRecommendations(eventId: string): Promise<LiveRecommendationsResponse> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/recommendations/live`);
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/recommendations/live`);
 
   if (!response.ok) {
     return parseErrorResponse(response);
@@ -190,7 +191,7 @@ export async function fetchLiveEventRecommendations(eventId: string): Promise<Li
  * if one is already running for this event.
  */
 export async function startLiveEventRecommendationGeneration(eventId: string): Promise<LiveGenerationJobResponse> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/recommendations/live/generate`, {
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/recommendations/live/generate`, {
     method: 'POST',
   });
 
@@ -207,7 +208,7 @@ export async function startLiveEventRecommendationGeneration(eventId: string): P
  * polled every few seconds while `status` is `QUEUED`/`PROCESSING`.
  */
 export async function fetchLiveEventRecommendationJobStatus(eventId: string): Promise<LiveGenerationJobResponse> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/recommendations/live/status`);
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/recommendations/live/status`);
 
   if (!response.ok) {
     return parseErrorResponse(response);
@@ -223,7 +224,7 @@ export async function fetchLiveEventRecommendationJobStatus(eventId: string): Pr
  * returned unchanged, no search calls) when nothing was missing.
  */
 export async function retryMissingLiveEventRecommendations(eventId: string): Promise<LiveRecommendationsResponse> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/recommendations/live/retry-missing`, {
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/recommendations/live/retry-missing`, {
     method: 'POST',
   });
 
@@ -241,7 +242,7 @@ export async function retryMissingLiveEventRecommendations(eventId: string): Pro
  * triggers a live Nordstrom search.
  */
 export async function invalidateStaleLiveEventRecommendations(eventId: string): Promise<void> {
-  const response = await fetch(
+  const response = await apiFetch(
     `/api/events/${encodeURIComponent(eventId)}/recommendations/live/invalidate-stale`,
     { method: 'POST' },
   );

@@ -2,18 +2,28 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createEvent,
   fetchEventById,
+  fetchEventHistory,
   fetchUpcomingEvents,
   updateEvent,
   type CreateEventInput,
 } from '../api/eventsApi';
 
 const eventsQueryKey = ['events'] as const;
+const eventHistoryQueryKey = ['events', 'history'] as const;
 const eventQueryKey = (eventId: string) => ['events', eventId] as const;
 
 export function useUpcomingEvents() {
   return useQuery({
     queryKey: eventsQueryKey,
     queryFn: fetchUpcomingEvents,
+  });
+}
+
+/** Every one of the current user's events (past and upcoming) - backs the saved history page. */
+export function useEventHistory() {
+  return useQuery({
+    queryKey: eventHistoryQueryKey,
+    queryFn: fetchEventHistory,
   });
 }
 

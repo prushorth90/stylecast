@@ -1,4 +1,5 @@
 import { EventApiError, type ApiErrorBody } from './eventsApi';
+import { apiFetch } from './httpClient';
 
 export type OccasionType =
   | 'WEDDING'
@@ -130,7 +131,7 @@ async function parseErrorResponse(response: Response): Promise<never> {
  * before this returns real data.
  */
 export async function fetchEventOccasionInterpretation(eventId: string): Promise<OccasionInterpretation> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/interpretation`);
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/interpretation`);
 
   if (!response.ok) {
     return parseErrorResponse(response);
@@ -146,7 +147,7 @@ export async function fetchEventOccasionInterpretation(eventId: string): Promise
 export async function regenerateEventOccasionInterpretation(
   eventId: string,
 ): Promise<OccasionInterpretation> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/interpretation/regenerate`, {
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/interpretation/regenerate`, {
     method: 'POST',
   });
 

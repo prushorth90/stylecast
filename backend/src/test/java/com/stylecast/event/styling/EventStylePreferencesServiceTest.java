@@ -1,9 +1,12 @@
 package com.stylecast.event.styling;
 
+import com.stylecast.auth.CurrentUserProvider;
 import com.stylecast.event.EventNotFoundException;
 import com.stylecast.event.EventRepository;
 import com.stylecast.event.styling.dto.EventStylePreferencesResponse;
-import com.stylecast.event.styling.dto.UpsertEventStylePreferencesRequest;import org.junit.jupiter.api.Test;
+import com.stylecast.event.styling.dto.UpsertEventStylePreferencesRequest;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -31,7 +34,17 @@ class EventStylePreferencesServiceTest {
     @Mock
     private EventRepository eventRepository;
 
+    @Mock
+    private CurrentUserProvider currentUserProvider;
+
+    private static final UUID USER_ID = UUID.randomUUID();
+
     private EventStylePreferencesService service;
+
+    @BeforeEach
+    void setUp() {
+        when(currentUserProvider.requireCurrentUserId()).thenReturn(USER_ID);
+    }
 
     private UpsertEventStylePreferencesRequest sampleRequest() {
         return new UpsertEventStylePreferencesRequest(
@@ -47,9 +60,9 @@ class EventStylePreferencesServiceTest {
 
     @Test
     void upsertPreferences_whenNoneExist_createsNewRecordTrimmedAndNormalized() {
-        service = new EventStylePreferencesService(preferencesRepository, eventRepository);
+        service = new EventStylePreferencesService(preferencesRepository, eventRepository, currentUserProvider);
         UUID eventId = UUID.randomUUID();
-        when(eventRepository.existsById(eventId)).thenReturn(true);
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(org.mockito.Mockito.mock(com.stylecast.event.Event.class)));
         when(preferencesRepository.findByEventId(eventId)).thenReturn(Optional.empty());
         when(preferencesRepository.save(any(EventStylePreferences.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -72,10 +85,10 @@ class EventStylePreferencesServiceTest {
 
     @Test
     void upsertPreferences_whenExisting_updatesSameRecordWithoutCreatingDuplicate() {
-        service = new EventStylePreferencesService(preferencesRepository, eventRepository);
+        service = new EventStylePreferencesService(preferencesRepository, eventRepository, currentUserProvider);
         UUID eventId = UUID.randomUUID();
         EventStylePreferences existing = new EventStylePreferences(UUID.randomUUID(), eventId, Instant.now());
-        when(eventRepository.existsById(eventId)).thenReturn(true);
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(org.mockito.Mockito.mock(com.stylecast.event.Event.class)));
         when(preferencesRepository.findByEventId(eventId)).thenReturn(Optional.of(existing));
         when(preferencesRepository.save(any(EventStylePreferences.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -90,9 +103,9 @@ class EventStylePreferencesServiceTest {
 
     @Test
     void upsertPreferences_withUnknownEvent_throwsWithoutSaving() {
-        service = new EventStylePreferencesService(preferencesRepository, eventRepository);
+        service = new EventStylePreferencesService(preferencesRepository, eventRepository, currentUserProvider);
         UUID unknownEventId = UUID.randomUUID();
-        when(eventRepository.existsById(unknownEventId)).thenReturn(false);
+        when(eventRepository.findByIdAndUserId(unknownEventId, USER_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.upsertPreferences(unknownEventId, sampleRequest()))
                 .isInstanceOf(EventNotFoundException.class)
@@ -103,13 +116,13 @@ class EventStylePreferencesServiceTest {
 
     @Test
     void getPreferences_withExisting_returnsResponse() {
-        service = new EventStylePreferencesService(preferencesRepository, eventRepository);
+        service = new EventStylePreferencesService(preferencesRepository, eventRepository, currentUserProvider);
         UUID eventId = UUID.randomUUID();
         EventStylePreferences existing = new EventStylePreferences(UUID.randomUUID(), eventId, Instant.now());
         existing.apply(
                 "Outfit request", new BigDecimal("100.00"), "M", "9", PreferredStyle.MODERN,
                 List.of("black"), List.of(), Instant.now());
-        when(eventRepository.existsById(eventId)).thenReturn(true);
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(org.mockito.Mockito.mock(com.stylecast.event.Event.class)));
         when(preferencesRepository.findByEventId(eventId)).thenReturn(Optional.of(existing));
 
         EventStylePreferencesResponse response = service.getPreferences(eventId);
@@ -120,9 +133,9 @@ class EventStylePreferencesServiceTest {
 
     @Test
     void getPreferences_whenNoneSaved_throwsEventStylePreferencesNotFoundException() {
-        service = new EventStylePreferencesService(preferencesRepository, eventRepository);
+        service = new EventStylePreferencesService(preferencesRepository, eventRepository, currentUserProvider);
         UUID eventId = UUID.randomUUID();
-        when(eventRepository.existsById(eventId)).thenReturn(true);
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(org.mockito.Mockito.mock(com.stylecast.event.Event.class)));
         when(preferencesRepository.findByEventId(eventId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getPreferences(eventId))
@@ -131,9 +144,9 @@ class EventStylePreferencesServiceTest {
 
     @Test
     void getPreferences_withUnknownEvent_throwsEventNotFoundException() {
-        service = new EventStylePreferencesService(preferencesRepository, eventRepository);
+        service = new EventStylePreferencesService(preferencesRepository, eventRepository, currentUserProvider);
         UUID unknownEventId = UUID.randomUUID();
-        when(eventRepository.existsById(unknownEventId)).thenReturn(false);
+        when(eventRepository.findByIdAndUserId(unknownEventId, USER_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getPreferences(unknownEventId))
                 .isInstanceOf(EventNotFoundException.class);

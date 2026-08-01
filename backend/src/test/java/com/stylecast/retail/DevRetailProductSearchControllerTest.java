@@ -5,6 +5,7 @@ import com.stylecast.common.error.ApiError;
 import com.stylecast.retail.dto.RetailProductSearchApiRequest;
 import com.stylecast.retail.dto.RetailProductSearchApiResponse;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -16,6 +17,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import com.stylecast.testsupport.NoExternalNetworkGuardConfig;
+import com.stylecast.testsupport.TestAuthSupport;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpStatus;
@@ -59,9 +61,21 @@ class DevRetailProductSearchControllerTest {
     @Autowired
     private FakeRetailProductSearchProvider fakeProvider;
 
+    private TestAuthSupport.InstalledAuth auth;
+
+    @BeforeEach
+    void authenticate() {
+        auth = TestAuthSupport.installAuthenticatedUser(restTemplate, port);
+    }
+
     @AfterEach
     void resetFake() {
         fakeProvider.reset();
+    }
+
+    @AfterEach
+    void clearAuthentication() {
+        TestAuthSupport.uninstall(restTemplate, auth);
     }
 
     private String url() {

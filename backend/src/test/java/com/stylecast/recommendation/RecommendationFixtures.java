@@ -70,7 +70,7 @@ final class RecommendationFixtures {
 
     static Event event() {
         return new Event(
-                UUID.randomUUID(), "Test Event", "description", "Springfield",
+                UUID.randomUUID(), UUID.randomUUID(), "Test Event", "description", "Springfield",
                 OffsetDateTime.now().plusDays(10), OffsetDateTime.now().plusDays(10).plusHours(3),
                 EventSetting.OUTDOOR, null, Instant.now());
     }

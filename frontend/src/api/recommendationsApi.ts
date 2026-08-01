@@ -1,4 +1,5 @@
 import { EventApiError, type ApiErrorBody } from './eventsApi';
+import { apiFetch } from './httpClient';
 import type { ProductCategory } from './occasionApi';
 
 export type RecommendationStatus = 'ACTIVE' | 'SUPERSEDED' | 'NO_VALID_OUTFIT';
@@ -83,7 +84,7 @@ async function parseErrorResponse(response: Response): Promise<never> {
  * error) when nothing has been generated for this event yet.
  */
 export async function fetchEventRecommendations(eventId: string): Promise<RecommendationsResponse> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/recommendations`);
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/recommendations`);
 
   if (!response.ok) {
     return parseErrorResponse(response);
@@ -100,7 +101,7 @@ export async function fetchEventRecommendations(eventId: string): Promise<Recomm
  * is already a clear, actionable explanation.
  */
 export async function generateEventRecommendations(eventId: string): Promise<RecommendationsResponse> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/recommendations/generate`, {
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/recommendations/generate`, {
     method: 'POST',
   });
 

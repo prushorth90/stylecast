@@ -1,4 +1,5 @@
 import { EventApiError, type ApiErrorBody } from './eventsApi';
+import { apiFetch } from './httpClient';
 
 export type WeatherAvailabilityStatus = 'AVAILABLE' | 'FORECAST_UNAVAILABLE';
 
@@ -56,7 +57,7 @@ async function parseErrorResponse(response: Response): Promise<never> {
  * back to).
  */
 export async function fetchEventWeather(eventId: string): Promise<EventWeather> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/weather`);
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/weather`);
 
   if (!response.ok) {
     return parseErrorResponse(response);
@@ -71,7 +72,7 @@ export async function fetchEventWeather(eventId: string): Promise<EventWeather> 
  * location, 503 for a temporary provider failure).
  */
 export async function refreshEventWeather(eventId: string): Promise<EventWeather> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/weather/refresh`, {
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/weather/refresh`, {
     method: 'POST',
   });
 

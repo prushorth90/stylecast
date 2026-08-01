@@ -1,5 +1,6 @@
 package com.stylecast.event;
 
+import com.stylecast.auth.CurrentUserProvider;
 import com.stylecast.event.dto.CreateEventRequest;
 import com.stylecast.event.dto.EventResponse;
 import org.junit.jupiter.api.Test;
@@ -27,11 +28,17 @@ class EventServiceTest {
     @Mock
     private EventRepository eventRepository;
 
+    @Mock
+    private CurrentUserProvider currentUserProvider;
+
     private EventService eventService;
+
+    private static final UUID USER_ID = UUID.randomUUID();
 
     @Test
     void createEvent_withEndAfterStart_savesAndReturnsResponse() {
-        eventService = new EventService(eventRepository);
+        eventService = new EventService(eventRepository, currentUserProvider);
+        when(currentUserProvider.requireCurrentUserId()).thenReturn(USER_ID);
         OffsetDateTime start = OffsetDateTime.now().plusDays(1);
         CreateEventRequest request = new CreateEventRequest(
                 "Gallery opening", "Art show", "Downtown gallery",
@@ -46,6 +53,7 @@ class EventServiceTest {
         Event savedEvent = captor.getValue();
 
         assertThat(savedEvent.getTitle()).isEqualTo("Gallery opening");
+        assertThat(savedEvent.getUserId()).isEqualTo(USER_ID);
         assertThat(savedEvent.getSetting()).isEqualTo(EventSetting.INDOOR);
         assertThat(response.title()).isEqualTo("Gallery opening");
         assertThat(response.dressCode()).isEqualTo("Cocktail attire");
@@ -53,7 +61,7 @@ class EventServiceTest {
 
     @Test
     void createEvent_withEndNotAfterStart_throwsWithoutSaving() {
-        eventService = new EventService(eventRepository);
+        eventService = new EventService(eventRepository, currentUserProvider);
         OffsetDateTime start = OffsetDateTime.now().plusDays(1);
         CreateEventRequest request = new CreateEventRequest(
                 "Gallery opening", null, "Downtown gallery",
@@ -68,9 +76,10 @@ class EventServiceTest {
 
     @Test
     void getEvent_withUnknownId_throwsEventNotFoundException() {
-        eventService = new EventService(eventRepository);
+        eventService = new EventService(eventRepository, currentUserProvider);
+        when(currentUserProvider.requireCurrentUserId()).thenReturn(USER_ID);
         UUID unknownId = UUID.randomUUID();
-        when(eventRepository.findById(unknownId)).thenReturn(Optional.empty());
+        when(eventRepository.findByIdAndUserId(unknownId, USER_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> eventService.getEvent(unknownId))
                 .isInstanceOf(EventNotFoundException.class)
@@ -79,12 +88,13 @@ class EventServiceTest {
 
     @Test
     void listUpcomingEvents_delegatesToRepositoryOrderedByStartTime() {
-        eventService = new EventService(eventRepository);
+        eventService = new EventService(eventRepository, currentUserProvider);
+        when(currentUserProvider.requireCurrentUserId()).thenReturn(USER_ID);
         Event event = new Event(
-                UUID.randomUUID(), "Concert", null, "Arena",
+                UUID.randomUUID(), USER_ID, "Concert", null, "Arena",
                 OffsetDateTime.now().plusDays(1), OffsetDateTime.now().plusDays(1).plusHours(2),
                 EventSetting.OUTDOOR, null, Instant.now());
-        when(eventRepository.findByEndTimeAfterOrderByStartTimeAsc(any(OffsetDateTime.class)))
+        when(eventRepository.findByUserIdAndEndTimeAfterOrderByStartTimeAsc(any(UUID.class), any(OffsetDateTime.class)))
                 .thenReturn(List.of(event));
 
         List<EventResponse> result = eventService.listUpcomingEvents();
@@ -93,3 +103,4 @@ class EventServiceTest {
         assertThat(result.get(0).title()).isEqualTo("Concert");
     }
 }
+

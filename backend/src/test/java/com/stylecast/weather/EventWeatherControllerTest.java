@@ -18,6 +18,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import com.stylecast.testsupport.NoExternalNetworkGuardConfig;
+import com.stylecast.testsupport.TestAuthSupport;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpStatus;
@@ -74,6 +75,7 @@ class EventWeatherControllerTest {
     private FakeWeatherProvider fakeWeatherProvider;
 
     private UUID eventId;
+    private TestAuthSupport.InstalledAuth auth;
 
     @BeforeEach
     void setUp() {
@@ -81,9 +83,11 @@ class EventWeatherControllerTest {
         eventRepository.deleteAll();
         fakeGeocodingProvider.reset();
         fakeWeatherProvider.reset();
+        auth = TestAuthSupport.installAuthenticatedUser(restTemplate, port);
 
         Event event = eventRepository.save(new Event(
                 UUID.randomUUID(),
+                auth.userId(),
                 "Rooftop birthday party",
                 "Casual outdoor birthday celebration",
                 "123 Main St, Springfield",
@@ -93,6 +97,11 @@ class EventWeatherControllerTest {
                 "Smart casual",
                 Instant.now()));
         eventId = event.getId();
+    }
+
+    @AfterEach
+    void clearAuthentication() {
+        TestAuthSupport.uninstall(restTemplate, auth);
     }
 
     @AfterEach
@@ -109,6 +118,27 @@ class EventWeatherControllerTest {
     void getWeather_forUnknownEvent_returns404() {
         ResponseEntity<ApiError> response =
                 restTemplate.getForEntity(url("/api/events/" + UUID.randomUUID() + "/weather"), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void getWeather_forAnotherUsersEvent_returns404() {
+        TestAuthSupport.AuthenticatedTestUser otherUser = TestAuthSupport.registerAndLogin(restTemplate, port);
+        Event othersEvent = eventRepository.save(new Event(
+                UUID.randomUUID(),
+                otherUser.userId(),
+                "Someone else's event",
+                "Description",
+                "Some location",
+                OffsetDateTime.now().plusDays(1),
+                OffsetDateTime.now().plusDays(1).plusHours(1),
+                EventSetting.INDOOR,
+                "Casual",
+                Instant.now()));
+
+        ResponseEntity<ApiError> response =
+                restTemplate.getForEntity(url("/api/events/" + othersEvent.getId() + "/weather"), ApiError.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
@@ -296,7 +326,7 @@ class EventWeatherControllerTest {
     @Test
     void refreshWeather_forEventBeyondForecastHorizon_returnsForecastUnavailableWithNoFabricatedValues() {
         Event distantEvent = eventRepository.save(new Event(
-                UUID.randomUUID(), "Far future event", null, "123 Main St, Springfield",
+                UUID.randomUUID(), auth.userId(), "Far future event", null, "123 Main St, Springfield",
                 OffsetDateTime.now().plusDays(60), OffsetDateTime.now().plusDays(60).plusHours(2),
                 EventSetting.INDOOR, null, Instant.now()));
 

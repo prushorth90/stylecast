@@ -10,6 +10,8 @@ import com.stylecast.recommendation.LiveOutfitRecommendation;
 import com.stylecast.recommendation.LiveOutfitRecommendationRepository;
 import com.stylecast.recommendation.LiveRecommendationCompleteness;
 import com.stylecast.testsupport.NoExternalNetworkGuardConfig;
+import com.stylecast.testsupport.TestAuthSupport;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -96,12 +98,20 @@ class EventSetupFlowIntegrationTest {
     @Autowired
     private LiveOutfitRecommendationRepository liveOutfitRecommendationRepository;
 
+    private TestAuthSupport.InstalledAuth auth;
+
     @BeforeEach
     void cleanDatabase() {
         liveOutfitRecommendationRepository.deleteAll();
         interpretationRepository.deleteAll();
         preferencesRepository.deleteAll();
         eventRepository.deleteAll();
+        auth = TestAuthSupport.installAuthenticatedUser(restTemplate, port);
+    }
+
+    @AfterEach
+    void clearAuthentication() {
+        TestAuthSupport.uninstall(restTemplate, auth);
     }
 
     private String url(String path) {

@@ -1,3 +1,5 @@
+import { apiFetch } from './httpClient';
+
 export interface HealthStatus {
   status: string;
   service: string;
@@ -12,7 +14,7 @@ export interface HealthStatus {
  * component must never hard-code a host such as "localhost".
  */
 export async function getHealth(): Promise<HealthStatus> {
-  const response = await fetch('/api/health');
+  const response = await apiFetch('/api/health');
 
   if (!response.ok) {
     throw new Error(`Health request failed with status ${response.status}`);

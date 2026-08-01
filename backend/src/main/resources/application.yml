@@ -8,6 +8,23 @@ spring:
   flyway:
     enabled: true
 
+server:
+  port: 8080
+  servlet:
+    session:
+      # Bounded token/session expiry (Task 17 requirement) - an idle
+      # session is invalidated after this window.
+      timeout: 30m
+      cookie:
+        http-only: true
+        same-site: lax
+        # No TLS is terminated anywhere in this MVP's local/Docker Compose
+        # setup (plain HTTP), so the cookie's Secure flag defaults to
+        # false there - a browser will not send a Secure cookie back over
+        # plain HTTP at all, which would break login entirely. A real
+        # deployment behind HTTPS must set SESSION_COOKIE_SECURE=true.
+        secure: ${SESSION_COOKIE_SECURE:false}
+
 management:
   endpoints:
     web:
@@ -66,6 +83,3 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
-
-server:
-  port: 8080
