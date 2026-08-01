@@ -1,3 +1,5 @@
+import { apiFetch } from './httpClient';
+
 export type ProductCategory =
   | 'BLAZER'
   | 'SUIT'
@@ -167,7 +169,7 @@ function buildQueryString(filters: CatalogFilters): string {
  * Vite to the backend) and in Docker (proxied by Nginx).
  */
 export async function fetchProducts(filters: CatalogFilters): Promise<ProductPage> {
-  const response = await fetch(`/api/products${buildQueryString(filters)}`);
+  const response = await apiFetch(`/api/products${buildQueryString(filters)}`);
 
   if (!response.ok) {
     return parseErrorResponse(response);
@@ -177,7 +179,7 @@ export async function fetchProducts(filters: CatalogFilters): Promise<ProductPag
 }
 
 export async function fetchProductById(productId: string): Promise<ProductDetail> {
-  const response = await fetch(`/api/products/${encodeURIComponent(productId)}`);
+  const response = await apiFetch(`/api/products/${encodeURIComponent(productId)}`);
 
   if (!response.ok) {
     return parseErrorResponse(response);

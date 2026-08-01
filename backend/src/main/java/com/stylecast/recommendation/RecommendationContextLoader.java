@@ -1,5 +1,6 @@
 package com.stylecast.recommendation;
 
+import com.stylecast.auth.CurrentUserProvider;
 import com.stylecast.event.Event;
 import com.stylecast.event.EventNotFoundException;
 import com.stylecast.event.EventRepository;
@@ -26,16 +27,19 @@ public class RecommendationContextLoader {
     private final EventStylePreferencesRepository preferencesRepository;
     private final OccasionInterpretationRepository interpretationRepository;
     private final EventWeatherSnapshotRepository weatherSnapshotRepository;
+    private final CurrentUserProvider currentUserProvider;
 
     public RecommendationContextLoader(
             EventRepository eventRepository,
             EventStylePreferencesRepository preferencesRepository,
             OccasionInterpretationRepository interpretationRepository,
-            EventWeatherSnapshotRepository weatherSnapshotRepository) {
+            EventWeatherSnapshotRepository weatherSnapshotRepository,
+            CurrentUserProvider currentUserProvider) {
         this.eventRepository = eventRepository;
         this.preferencesRepository = preferencesRepository;
         this.interpretationRepository = interpretationRepository;
         this.weatherSnapshotRepository = weatherSnapshotRepository;
+        this.currentUserProvider = currentUserProvider;
     }
 
     /**
@@ -44,7 +48,8 @@ public class RecommendationContextLoader {
      * return 404 for an unknown event id.
      */
     public Event requireEvent(UUID eventId) {
-        return eventRepository.findById(eventId).orElseThrow(() -> new EventNotFoundException(eventId));
+        return eventRepository.findByIdAndUserId(eventId, currentUserProvider.requireCurrentUserId())
+                .orElseThrow(() -> new EventNotFoundException(eventId));
     }
 
     /**

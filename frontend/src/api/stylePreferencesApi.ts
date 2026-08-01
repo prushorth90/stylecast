@@ -1,4 +1,5 @@
 import { EventApiError, type ApiErrorBody } from './eventsApi';
+import { apiFetch } from './httpClient';
 
 export type PreferredStyle = 'CLASSIC' | 'MODERN' | 'MINIMAL' | 'BOLD' | 'CASUAL' | 'FORMAL';
 
@@ -69,7 +70,7 @@ async function parseErrorResponse(response: Response): Promise<never> {
 export async function fetchEventStylePreferences(
   eventId: string,
 ): Promise<EventStylePreferences | null> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/preferences`);
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/preferences`);
 
   if (response.status === 404) {
     return null;
@@ -90,7 +91,7 @@ export async function saveEventStylePreferences(
   eventId: string,
   input: SaveEventStylePreferencesInput,
 ): Promise<EventStylePreferences> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/preferences`, {
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}/preferences`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),

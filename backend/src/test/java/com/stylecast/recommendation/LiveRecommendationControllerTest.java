@@ -40,6 +40,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import com.stylecast.testsupport.NoExternalNetworkGuardConfig;
+import com.stylecast.testsupport.TestAuthSupport;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpStatus;
@@ -105,6 +106,8 @@ class LiveRecommendationControllerTest {
     @Autowired
     private FakeRetailProductSearchProvider fakeProvider;
 
+    private TestAuthSupport.InstalledAuth auth;
+
     @BeforeEach
     void cleanDatabase() {
         liveRecommendationRepository.deleteAll();
@@ -113,11 +116,17 @@ class LiveRecommendationControllerTest {
         preferencesRepository.deleteAll();
         eventRepository.deleteAll();
         fakeProvider.reset();
+        auth = TestAuthSupport.installAuthenticatedUser(restTemplate, port);
     }
 
     @AfterEach
     void resetFake() {
         fakeProvider.reset();
+    }
+
+    @AfterEach
+    void clearAuthentication() {
+        TestAuthSupport.uninstall(restTemplate, auth);
     }
 
     private String url(String path) {
@@ -126,7 +135,7 @@ class LiveRecommendationControllerTest {
 
     private UUID createEvent(String title) {
         Event event = eventRepository.save(new Event(
-                UUID.randomUUID(), title, "description", "123 Main St, Springfield",
+                UUID.randomUUID(), auth.userId(), title, "description", "123 Main St, Springfield",
                 OffsetDateTime.now().plusDays(20), OffsetDateTime.now().plusDays(20).plusHours(4),
                 EventSetting.INDOOR, null, Instant.now()));
         return event.getId();
@@ -230,6 +239,20 @@ class LiveRecommendationControllerTest {
     void generate_withUnknownEventId_returns404() {
         ResponseEntity<ApiError> response = restTemplate.postForEntity(
                 url("/api/events/" + UUID.randomUUID() + "/recommendations/live/generate"), null, ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void generate_forAnotherUsersEvent_returns404() {
+        TestAuthSupport.AuthenticatedTestUser otherUser = TestAuthSupport.registerAndLogin(restTemplate, port);
+        Event othersEvent = eventRepository.save(new Event(
+                UUID.randomUUID(), otherUser.userId(), "Someone else's event", "description",
+                "123 Main St, Springfield", OffsetDateTime.now().plusDays(20), OffsetDateTime.now().plusDays(20).plusHours(4),
+                EventSetting.INDOOR, null, Instant.now()));
+
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                url("/api/events/" + othersEvent.getId() + "/recommendations/live/generate"), null, ApiError.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }

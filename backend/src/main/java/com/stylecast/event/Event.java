@@ -25,6 +25,9 @@ public class Event {
     @Id
     private UUID id;
 
+    @Column(name = "user_id", nullable = false)
+    private UUID userId;
+
     @Column(nullable = false, length = 200)
     private String title;
 
@@ -56,6 +59,7 @@ public class Event {
 
     public Event(
             UUID id,
+            UUID userId,
             String title,
             String description,
             String location,
@@ -65,6 +69,7 @@ public class Event {
             String dressCode,
             Instant createdAt) {
         this.id = id;
+        this.userId = userId;
         this.title = title;
         this.description = description;
         this.location = location;
@@ -100,6 +105,10 @@ public class Event {
 
     public UUID getId() {
         return id;
+    }
+
+    public UUID getUserId() {
+        return userId;
     }
 
     public String getTitle() {

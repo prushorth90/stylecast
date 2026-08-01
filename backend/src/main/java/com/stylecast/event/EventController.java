@@ -41,6 +41,12 @@ public class EventController {
         return eventService.listUpcomingEvents();
     }
 
+    /** Every one of the current user's events (past and upcoming) - backs the saved history page. */
+    @GetMapping("/history")
+    public List<EventResponse> listEventHistory() {
+        return eventService.listEventHistory();
+    }
+
     @GetMapping("/{eventId}")
     public EventResponse getEvent(@PathVariable UUID eventId) {
         return eventService.getEvent(eventId);

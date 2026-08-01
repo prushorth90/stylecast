@@ -92,6 +92,102 @@ Implemented so far:
   "View on Nordstrom" link per product - no product images) rather than
   the earlier temporary summary cards. See "Live Nordstrom recommendations
   are link-based" below.
+- Authentication and per-user event ownership (Task 17): registration,
+  login, logout, and a saved event/look history page at `/history`. Every
+  event now belongs to exactly one registered user, and every event-scoped
+  endpoint (preferences, weather, interpretation, recommendations,
+  generation jobs) is only reachable through the owning event. See
+  "Authentication" below.
+
+### Authentication
+
+StyleCast uses email/password registration and login with a secure,
+`HttpOnly` session cookie (not a JWT stored in JavaScript-accessible
+storage) - see "Token security model" below for the reasoning.
+
+- `POST /api/auth/register` - `{ "email": "...", "password": "..." }`
+  (password must be at least 8 characters). Returns the new user (never a
+  password) as `{ "id": "...", "email": "..." }`. A duplicate email returns
+  HTTP 409.
+- `POST /api/auth/login` - same body shape as register; sets the session
+  cookie and returns the logged-in user. An incorrect email/password
+  returns a generic HTTP 401 ("Invalid email or password") - it never
+  reveals whether the email is registered.
+- `POST /api/auth/logout` - invalidates the session.
+- `GET /api/auth/me` - returns the current user if a session is active,
+  HTTP 401 otherwise. The frontend calls this once on load to restore
+  authentication across a page refresh.
+- Every other endpoint requires an active session; unauthenticated calls
+  return HTTP 401. The only endpoints that don't require authentication are
+  the four above, `GET /api/health`/`/actuator/health`, and API
+  documentation (`/v3/api-docs`, `/swagger-ui.html`).
+- Every event belongs to exactly one user (`events.user_id`). Every
+  event-scoped endpoint filters by both the event id and the current
+  user, so a request for another user's event - by any UUID, guessed or
+  otherwise - returns the same HTTP 404 as a truly unknown id. It's
+  impossible to distinguish "doesn't exist" from "exists but isn't yours"
+  from the response.
+- `/history` (frontend) shows every one of the current user's events, past
+  and upcoming, with a per-event live-recommendation generation status.
+
+#### Local registration and login
+
+1. Start the app (see "Local development"/"Docker" below) and open the
+   frontend.
+2. You'll be redirected to `/login`. Click "Register" and create an
+   account with any email and an 8+ character password - there is no email
+   verification step in this MVP (see "Known limitations" below).
+3. After registering you're logged in automatically and returned to the
+   app.
+
+#### Ownership rules
+
+- A new event is always owned by whichever user is authenticated when it's
+  created - the frontend never sends a user id, and the backend never
+  accepts one; the owner is always derived from the session.
+- The events list (`GET /api/events`) and history
+  (`GET /api/events/history`) only ever return the current user's own
+  events.
+- Existing local events created before this task (if any) were **not**
+  preserved - see the Flyway migration notes in
+  `backend/src/main/resources/db/migration/V20__add_user_id_to_events.sql`
+  for why (pre-launch local data only, no real accounts to migrate).
+
+#### Authentication environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SESSION_COOKIE_SECURE` | `false` | Whether the session cookie requires HTTPS (`Secure` flag). Local/Docker Compose serve plain HTTP, so this must stay `false` there - a real HTTPS deployment must set it to `true`. |
+
+No JWT signing secret exists or is needed - sessions are plain,
+server-side Spring Security sessions (an opaque `JSESSIONID`, not a
+self-contained signed token), so there is nothing to configure via an
+environment variable for token signing.
+
+#### Token security model
+
+- The session cookie is `HttpOnly` (never readable by JavaScript) and
+  `SameSite=Lax`.
+- CSRF protection uses Spring Security's cookie-based double-submit
+  pattern: a separate, JS-readable `XSRF-TOKEN` cookie is echoed back by
+  the frontend as an `X-XSRF-TOKEN` header on every state-changing
+  request. This is the only thing JavaScript ever touches - the session
+  identifier itself is never exposed to JS.
+- Passwords are hashed with BCrypt; the hash never appears in any API
+  response.
+- Sessions expire after 30 minutes of inactivity (`server.servlet.session.timeout`).
+
+#### Known limitations (out of scope for this task)
+
+- No password reset/forgot-password flow.
+- No email verification.
+- No multi-factor authentication.
+- No roles beyond a single normal-user role (no admin dashboard).
+- Sessions are held in memory by the backend process - restarting the
+  backend container logs every user out. Acceptable for this MVP's
+  single-instance deployment; a real production deployment with multiple
+  backend instances would need a shared session store (e.g. Spring
+  Session backed by Postgres or Redis).
 
 ### Live retail product search (development)
 

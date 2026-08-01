@@ -1,5 +1,6 @@
 package com.stylecast.recommendation;
 
+import com.stylecast.auth.CurrentUserProvider;
 import com.stylecast.event.Event;
 import com.stylecast.event.EventNotFoundException;
 import com.stylecast.event.EventRepository;
@@ -18,6 +19,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
@@ -34,15 +36,21 @@ class RecommendationContextLoaderTest {
     private OccasionInterpretationRepository interpretationRepository;
     @Mock
     private EventWeatherSnapshotRepository weatherSnapshotRepository;
+    @Mock
+    private CurrentUserProvider currentUserProvider;
+
+    private static final UUID USER_ID = UUID.randomUUID();
 
     private RecommendationContextLoader loader() {
-        return new RecommendationContextLoader(eventRepository, preferencesRepository, interpretationRepository, weatherSnapshotRepository);
+        lenient().when(currentUserProvider.requireCurrentUserId()).thenReturn(USER_ID);
+        return new RecommendationContextLoader(
+                eventRepository, preferencesRepository, interpretationRepository, weatherSnapshotRepository, currentUserProvider);
     }
 
     @Test
     void requireEvent_withUnknownEventId_throwsEventNotFoundException() {
         UUID eventId = UUID.randomUUID();
-        when(eventRepository.findById(eventId)).thenReturn(Optional.empty());
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> loader().requireEvent(eventId)).isInstanceOf(EventNotFoundException.class);
     }
@@ -50,7 +58,7 @@ class RecommendationContextLoaderTest {
     @Test
     void load_withUnknownEventId_throwsEventNotFoundException() {
         UUID eventId = UUID.randomUUID();
-        when(eventRepository.findById(eventId)).thenReturn(Optional.empty());
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> loader().load(eventId)).isInstanceOf(EventNotFoundException.class);
     }
@@ -58,7 +66,7 @@ class RecommendationContextLoaderTest {
     @Test
     void load_withoutSavedPreferences_throwsMissingStylePreferencesException() {
         UUID eventId = UUID.randomUUID();
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(RecommendationFixtures.event()));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(RecommendationFixtures.event()));
         when(preferencesRepository.findByEventId(eventId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> loader().load(eventId)).isInstanceOf(MissingStylePreferencesException.class);
@@ -68,7 +76,7 @@ class RecommendationContextLoaderTest {
     void load_withoutOccasionInterpretation_throwsMissingOccasionInterpretationException() {
         UUID eventId = UUID.randomUUID();
         Event event = RecommendationFixtures.event();
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         EventStylePreferences preferences = mockPreferences(eventId);
         when(preferencesRepository.findByEventId(eventId)).thenReturn(Optional.of(preferences));
         when(interpretationRepository.findByEventId(eventId)).thenReturn(Optional.empty());
@@ -80,7 +88,7 @@ class RecommendationContextLoaderTest {
     void load_withEveryPrerequisitePresent_returnsPopulatedContextEvenWithoutWeather() {
         UUID eventId = UUID.randomUUID();
         Event event = RecommendationFixtures.event();
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         EventStylePreferences preferences = mockPreferences(eventId);
         when(preferencesRepository.findByEventId(eventId)).thenReturn(Optional.of(preferences));
         OccasionInterpretation interpretation = mockInterpretation(eventId);

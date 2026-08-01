@@ -1,5 +1,6 @@
 package com.stylecast.weather;
 
+import com.stylecast.auth.CurrentUserProvider;
 import com.stylecast.event.Event;
 import com.stylecast.event.EventNotFoundException;
 import com.stylecast.event.EventRepository;
@@ -40,18 +41,21 @@ public class EventWeatherService {
     private final GeocodingProvider geocodingProvider;
     private final WeatherProvider weatherProvider;
     private final WeatherProperties properties;
+    private final CurrentUserProvider currentUserProvider;
 
     public EventWeatherService(
             EventRepository eventRepository,
             EventWeatherSnapshotRepository snapshotRepository,
             GeocodingProvider geocodingProvider,
             WeatherProvider weatherProvider,
-            WeatherProperties properties) {
+            WeatherProperties properties,
+            CurrentUserProvider currentUserProvider) {
         this.eventRepository = eventRepository;
         this.snapshotRepository = snapshotRepository;
         this.geocodingProvider = geocodingProvider;
         this.weatherProvider = weatherProvider;
         this.properties = properties;
+        this.currentUserProvider = currentUserProvider;
     }
 
     /**
@@ -123,6 +127,7 @@ public class EventWeatherService {
     }
 
     private Event requireEvent(UUID eventId) {
-        return eventRepository.findById(eventId).orElseThrow(() -> new EventNotFoundException(eventId));
+        return eventRepository.findByIdAndUserId(eventId, currentUserProvider.requireCurrentUserId())
+                .orElseThrow(() -> new EventNotFoundException(eventId));
     }
 }

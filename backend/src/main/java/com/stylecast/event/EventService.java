@@ -1,5 +1,6 @@
 package com.stylecast.event;
 
+import com.stylecast.auth.CurrentUserProvider;
 import com.stylecast.event.dto.CreateEventRequest;
 import com.stylecast.event.dto.EventResponse;
 import org.springframework.stereotype.Service;
@@ -13,14 +14,23 @@ import java.util.UUID;
  * Application service for manual event creation and retrieval. Holds the
  * domain rules that don't belong in the controller or in simple per-field
  * bean validation.
+ *
+ * Every method that loads an existing event resolves it through {@link
+ * EventRepository#findByIdAndUserId} using {@link CurrentUserProvider} -
+ * never a userId supplied by the caller - so a user can never read, edit,
+ * or list another user's events, including by guessing a UUID (an
+ * event that exists but isn't owned by the caller looks identical to one
+ * that doesn't exist at all: {@link EventNotFoundException} / 404).
  */
 @Service
 public class EventService {
 
     private final EventRepository eventRepository;
+    private final CurrentUserProvider currentUserProvider;
 
-    public EventService(EventRepository eventRepository) {
+    public EventService(EventRepository eventRepository, CurrentUserProvider currentUserProvider) {
         this.eventRepository = eventRepository;
+        this.currentUserProvider = currentUserProvider;
     }
 
     public EventResponse createEvent(CreateEventRequest request) {
@@ -30,6 +40,7 @@ public class EventService {
 
         Event event = new Event(
                 UUID.randomUUID(),
+                currentUserProvider.requireCurrentUserId(),
                 request.title(),
                 request.description(),
                 request.location(),
@@ -55,7 +66,7 @@ public class EventService {
             throw new InvalidEventException("endTime must be after startTime");
         }
 
-        Event event = eventRepository.findById(eventId)
+        Event event = eventRepository.findByIdAndUserId(eventId, currentUserProvider.requireCurrentUserId())
                 .orElseThrow(() -> new EventNotFoundException(eventId));
 
         event.update(
@@ -72,15 +83,28 @@ public class EventService {
     }
 
     public List<EventResponse> listUpcomingEvents() {
-        return eventRepository.findByEndTimeAfterOrderByStartTimeAsc(OffsetDateTime.now())
+        return eventRepository
+                .findByUserIdAndEndTimeAfterOrderByStartTimeAsc(currentUserProvider.requireCurrentUserId(), OffsetDateTime.now())
+                .stream()
+                .map(EventResponse::fromEntity)
+                .toList();
+    }
+
+    /**
+     * All of the current user's events (past and upcoming), most recent
+     * first - backs the saved event/look history page.
+     */
+    public List<EventResponse> listEventHistory() {
+        return eventRepository.findByUserIdOrderByStartTimeDesc(currentUserProvider.requireCurrentUserId())
                 .stream()
                 .map(EventResponse::fromEntity)
                 .toList();
     }
 
     public EventResponse getEvent(UUID eventId) {
-        Event event = eventRepository.findById(eventId)
+        Event event = eventRepository.findByIdAndUserId(eventId, currentUserProvider.requireCurrentUserId())
                 .orElseThrow(() -> new EventNotFoundException(eventId));
         return EventResponse.fromEntity(event);
     }
 }
+

@@ -1,5 +1,6 @@
 package com.stylecast.occasion;
 
+import com.stylecast.auth.CurrentUserProvider;
 import com.stylecast.event.Event;
 import com.stylecast.event.EventNotFoundException;
 import com.stylecast.event.EventRepository;
@@ -22,6 +23,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -45,11 +47,17 @@ class OccasionInterpretationServiceTest {
     @Mock
     private RuleBasedOccasionClassifier ruleBasedClassifier;
 
+    @Mock
+    private CurrentUserProvider currentUserProvider;
+
+    private static final UUID USER_ID = UUID.randomUUID();
+
     private OccasionInterpretationService service;
 
     private Event sampleEvent(UUID eventId) {
         return new Event(
                 eventId,
+                USER_ID,
                 "Sarah & Tom's Wedding",
                 "Outdoor garden ceremony",
                 "123 Main St, Springfield",
@@ -96,7 +104,9 @@ class OccasionInterpretationServiceTest {
 
     private void initService() {
         service = new OccasionInterpretationService(
-                eventRepository, preferencesRepository, interpretationRepository, openAiClassifier, ruleBasedClassifier);
+                eventRepository, preferencesRepository, interpretationRepository, openAiClassifier, ruleBasedClassifier,
+                currentUserProvider);
+        lenient().when(currentUserProvider.requireCurrentUserId()).thenReturn(USER_ID);
     }
 
     @Test
@@ -104,7 +114,7 @@ class OccasionInterpretationServiceTest {
         initService();
         UUID eventId = UUID.randomUUID();
         Event event = sampleEvent(eventId);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(preferencesRepository.findByEventId(eventId)).thenReturn(Optional.empty());
         when(interpretationRepository.findByEventId(eventId)).thenReturn(Optional.empty());
         when(openAiClassifier.classify(any())).thenReturn(aiResult());
@@ -129,7 +139,7 @@ class OccasionInterpretationServiceTest {
         Event event = sampleEvent(eventId);
         OccasionInterpretation existing = new OccasionInterpretation(UUID.randomUUID(), eventId, Instant.now());
         existing.apply(aiResult(), Instant.now());
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(interpretationRepository.findByEventId(eventId)).thenReturn(Optional.of(existing));
 
         OccasionInterpretationResponse response = service.getInterpretation(eventId);
@@ -144,7 +154,7 @@ class OccasionInterpretationServiceTest {
     void getInterpretation_whenEventDoesNotExist_throwsEventNotFound() {
         initService();
         UUID eventId = UUID.randomUUID();
-        when(eventRepository.findById(eventId)).thenReturn(Optional.empty());
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getInterpretation(eventId)).isInstanceOf(EventNotFoundException.class);
         verifyNoInteractions(interpretationRepository);
@@ -159,7 +169,7 @@ class OccasionInterpretationServiceTest {
         OccasionInterpretation existing = new OccasionInterpretation(existingId, eventId, Instant.now());
         existing.apply(fallbackResult(), Instant.now().minusSeconds(3600));
 
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(interpretationRepository.findByEventId(eventId)).thenReturn(Optional.of(existing));
         when(openAiClassifier.classify(any())).thenReturn(aiResult());
         when(interpretationRepository.save(any(OccasionInterpretation.class)))
@@ -182,7 +192,7 @@ class OccasionInterpretationServiceTest {
         initService();
         UUID eventId = UUID.randomUUID();
         Event event = sampleEvent(eventId);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(preferencesRepository.findByEventId(eventId)).thenReturn(Optional.empty());
         when(interpretationRepository.findByEventId(eventId)).thenReturn(Optional.empty());
         when(openAiClassifier.classify(any()))
@@ -202,7 +212,7 @@ class OccasionInterpretationServiceTest {
         initService();
         UUID eventId = UUID.randomUUID();
         Event event = sampleEvent(eventId);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(preferencesRepository.findByEventId(eventId)).thenReturn(Optional.empty());
         when(interpretationRepository.findByEventId(eventId)).thenReturn(Optional.empty());
         when(openAiClassifier.classify(any()))

@@ -1,5 +1,6 @@
 package com.stylecast.weather;
 
+import com.stylecast.auth.CurrentUserProvider;
 import com.stylecast.event.Event;
 import com.stylecast.event.EventNotFoundException;
 import com.stylecast.event.EventRepository;
@@ -44,6 +45,11 @@ class EventWeatherServiceTest {
     @Mock
     private WeatherProvider weatherProvider;
 
+    @Mock
+    private CurrentUserProvider currentUserProvider;
+
+    private static final UUID USER_ID = UUID.randomUUID();
+
     private WeatherProperties properties;
     private EventWeatherService service;
 
@@ -52,15 +58,16 @@ class EventWeatherServiceTest {
         properties = new WeatherProperties(
                 "http://localhost", "http://localhost", 1000, 1000, 16, FRESHNESS_MINUTES, "OPEN_METEO");
         service = new EventWeatherService(
-                eventRepository, snapshotRepository, geocodingProvider, weatherProvider, properties);
+                eventRepository, snapshotRepository, geocodingProvider, weatherProvider, properties, currentUserProvider);
         lenient().when(weatherProvider.forecastHorizonDays()).thenReturn(16);
         lenient().when(weatherProvider.name()).thenReturn("OPEN_METEO");
+        lenient().when(currentUserProvider.requireCurrentUserId()).thenReturn(USER_ID);
     }
 
     private Event eventStartingIn(UUID eventId, long daysFromNow) {
         OffsetDateTime start = OffsetDateTime.now().plusDays(daysFromNow);
         return new Event(
-                eventId, "Some event", "Description", "123 Main St, Springfield",
+                eventId, USER_ID, "Some event", "Description", "123 Main St, Springfield",
                 start, start.plusHours(3), EventSetting.OUTDOOR, "Casual", Instant.now());
     }
 
@@ -80,7 +87,7 @@ class EventWeatherServiceTest {
     @Test
     void getWeather_withUnknownEvent_throws404() {
         UUID eventId = UUID.randomUUID();
-        when(eventRepository.findById(eventId)).thenReturn(Optional.empty());
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getWeather(eventId))
                 .isInstanceOf(EventNotFoundException.class);
@@ -90,7 +97,7 @@ class EventWeatherServiceTest {
     void getWeather_withNoSnapshot_automaticallyFetchesFromProviderAndPersists() {
         UUID eventId = UUID.randomUUID();
         Event event = eventStartingIn(eventId, 2);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(snapshotRepository.findByEventId(eventId)).thenReturn(Optional.empty());
 
         GeocodedLocation location = new GeocodedLocation("Springfield, USA", new GeoCoordinates(39.0, -89.0));
@@ -116,7 +123,7 @@ class EventWeatherServiceTest {
     void getWeather_withNoSnapshotAndProviderFailure_propagatesWithNoDataToFallBackTo() {
         UUID eventId = UUID.randomUUID();
         Event event = eventStartingIn(eventId, 2);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(snapshotRepository.findByEventId(eventId)).thenReturn(Optional.empty());
         when(geocodingProvider.geocode(event.getLocation()))
                 .thenThrow(new GeocodingProviderException("timeout"));
@@ -131,7 +138,7 @@ class EventWeatherServiceTest {
     void getWeather_withFreshSnapshot_returnsSavedDataWithoutCallingAnyProvider() {
         UUID eventId = UUID.randomUUID();
         EventWeatherSnapshot snapshot = availableSnapshot(eventId, Instant.now());
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(eventStartingIn(eventId, 1)));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(eventStartingIn(eventId, 1)));
         when(snapshotRepository.findByEventId(eventId)).thenReturn(Optional.of(snapshot));
 
         EventWeatherResponse response = service.getWeather(eventId);
@@ -150,7 +157,7 @@ class EventWeatherServiceTest {
         Event event = eventStartingIn(eventId, 2);
         Instant staleRetrievedAt = Instant.now().minus(java.time.Duration.ofMinutes(FRESHNESS_MINUTES + 1));
         EventWeatherSnapshot snapshot = availableSnapshot(eventId, staleRetrievedAt);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(snapshotRepository.findByEventId(eventId)).thenReturn(Optional.of(snapshot));
 
         GeocodedLocation location = new GeocodedLocation("Somewhere", new GeoCoordinates(1.0, 2.0));
@@ -177,7 +184,7 @@ class EventWeatherServiceTest {
         Event event = eventStartingIn(eventId, 2);
         Instant staleRetrievedAt = Instant.now().minus(java.time.Duration.ofMinutes(FRESHNESS_MINUTES + 1));
         EventWeatherSnapshot snapshot = availableSnapshot(eventId, staleRetrievedAt);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(snapshotRepository.findByEventId(eventId)).thenReturn(Optional.of(snapshot));
         when(geocodingProvider.geocode(event.getLocation()))
                 .thenThrow(new WeatherProviderException("provider unavailable"));
@@ -200,7 +207,7 @@ class EventWeatherServiceTest {
         Event event = eventStartingIn(eventId, 2);
         Instant staleRetrievedAt = Instant.now().minus(java.time.Duration.ofMinutes(FRESHNESS_MINUTES + 1));
         EventWeatherSnapshot snapshot = availableSnapshot(eventId, staleRetrievedAt);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(snapshotRepository.findByEventId(eventId)).thenReturn(Optional.of(snapshot));
         when(geocodingProvider.geocode(event.getLocation()))
                 .thenThrow(new UnresolvableLocationException(event.getLocation()));
@@ -217,7 +224,7 @@ class EventWeatherServiceTest {
     @Test
     void refreshWeather_withUnknownEvent_throwsAndNeverSaves() {
         UUID eventId = UUID.randomUUID();
-        when(eventRepository.findById(eventId)).thenReturn(Optional.empty());
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.refreshWeather(eventId))
                 .isInstanceOf(EventNotFoundException.class);
@@ -229,7 +236,7 @@ class EventWeatherServiceTest {
     void refreshWeather_withinHorizon_geocodesFetchesAndSavesAvailableSnapshot() {
         UUID eventId = UUID.randomUUID();
         Event event = eventStartingIn(eventId, 2);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(snapshotRepository.findByEventId(eventId)).thenReturn(Optional.empty());
 
         GeocodedLocation location = new GeocodedLocation("Springfield, USA", new GeoCoordinates(39.0, -89.0));
@@ -265,7 +272,7 @@ class EventWeatherServiceTest {
         UUID eventId = UUID.randomUUID();
         Event event = eventStartingIn(eventId, 2);
         EventWeatherSnapshot existing = new EventWeatherSnapshot(UUID.randomUUID(), eventId, Instant.now());
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(snapshotRepository.findByEventId(eventId)).thenReturn(Optional.of(existing));
 
         GeocodedLocation location = new GeocodedLocation("Somewhere", new GeoCoordinates(1.0, 2.0));
@@ -288,7 +295,7 @@ class EventWeatherServiceTest {
     void refreshWeather_beyondForecastHorizon_savesUnavailableWithoutCallingProviders() {
         UUID eventId = UUID.randomUUID();
         Event event = eventStartingIn(eventId, 30);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(snapshotRepository.findByEventId(eventId)).thenReturn(Optional.empty());
         when(snapshotRepository.save(any(EventWeatherSnapshot.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -316,7 +323,7 @@ class EventWeatherServiceTest {
     void refreshWeather_withUnresolvableLocation_propagatesWithoutSaving() {
         UUID eventId = UUID.randomUUID();
         Event event = eventStartingIn(eventId, 2);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(snapshotRepository.findByEventId(eventId)).thenReturn(Optional.empty());
         when(geocodingProvider.geocode(event.getLocation()))
                 .thenThrow(new UnresolvableLocationException(event.getLocation()));
@@ -331,7 +338,7 @@ class EventWeatherServiceTest {
     void refreshWeather_withGeocodingProviderFailure_propagatesWithoutSaving() {
         UUID eventId = UUID.randomUUID();
         Event event = eventStartingIn(eventId, 2);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(snapshotRepository.findByEventId(eventId)).thenReturn(Optional.empty());
         when(geocodingProvider.geocode(event.getLocation()))
                 .thenThrow(new GeocodingProviderException("timeout"));
@@ -346,7 +353,7 @@ class EventWeatherServiceTest {
     void refreshWeather_withWeatherProviderFailure_propagatesWithoutSaving() {
         UUID eventId = UUID.randomUUID();
         Event event = eventStartingIn(eventId, 2);
-        when(eventRepository.findById(eventId)).thenReturn(Optional.of(event));
+        when(eventRepository.findByIdAndUserId(eventId, USER_ID)).thenReturn(Optional.of(event));
         when(snapshotRepository.findByEventId(eventId)).thenReturn(Optional.empty());
         GeocodedLocation location = new GeocodedLocation("Somewhere", new GeoCoordinates(1.0, 2.0));
         when(geocodingProvider.geocode(event.getLocation())).thenReturn(location);

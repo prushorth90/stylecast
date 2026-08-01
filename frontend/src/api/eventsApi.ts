@@ -1,3 +1,5 @@
+import { apiFetch } from './httpClient';
+
 export type EventSetting = 'INDOOR' | 'OUTDOOR';
 
 /**
@@ -80,7 +82,7 @@ async function parseErrorResponse(response: Response): Promise<never> {
  * Vite to the backend) and in Docker (proxied by Nginx).
  */
 export async function fetchUpcomingEvents(): Promise<Event[]> {
-  const response = await fetch('/api/events');
+  const response = await apiFetch('/api/events');
 
   if (!response.ok) {
     return parseErrorResponse(response);
@@ -90,7 +92,7 @@ export async function fetchUpcomingEvents(): Promise<Event[]> {
 }
 
 export async function fetchEventById(eventId: string): Promise<Event> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}`);
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}`);
 
   if (!response.ok) {
     return parseErrorResponse(response);
@@ -99,8 +101,24 @@ export async function fetchEventById(eventId: string): Promise<Event> {
   return (await response.json()) as Event;
 }
 
+/**
+ * Fetches every one of the current user's events (past and upcoming,
+ * ordered most-recent-first) - backs the saved event/look history page.
+ * Unlike {@link fetchUpcomingEvents}, this never excludes events whose
+ * `endTime` has already passed.
+ */
+export async function fetchEventHistory(): Promise<Event[]> {
+  const response = await apiFetch('/api/events/history');
+
+  if (!response.ok) {
+    return parseErrorResponse(response);
+  }
+
+  return (await response.json()) as Event[];
+}
+
 export async function createEvent(input: CreateEventInput): Promise<Event> {
-  const response = await fetch('/api/events', {
+  const response = await apiFetch('/api/events', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -120,7 +138,7 @@ export async function createEvent(input: CreateEventInput): Promise<Event> {
  * Step 2), so repeated edits never create duplicate events.
  */
 export async function updateEvent(eventId: string, input: CreateEventInput): Promise<Event> {
-  const response = await fetch(`/api/events/${encodeURIComponent(eventId)}`, {
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),

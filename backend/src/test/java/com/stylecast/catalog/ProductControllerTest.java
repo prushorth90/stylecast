@@ -4,6 +4,8 @@ import com.stylecast.catalog.dto.ProductDetailResponse;
 import com.stylecast.catalog.dto.ProductPageResponse;
 import com.stylecast.catalog.dto.ProductSummaryResponse;
 import com.stylecast.common.error.ApiError;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -14,6 +16,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import com.stylecast.testsupport.NoExternalNetworkGuardConfig;
+import com.stylecast.testsupport.TestAuthSupport;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -46,6 +49,18 @@ class ProductControllerTest {
 
     @Autowired
     private TestRestTemplate restTemplate;
+
+    private TestAuthSupport.InstalledAuth authInterceptor;
+
+    @BeforeEach
+    void authenticate() {
+        authInterceptor = TestAuthSupport.installAuthenticatedUser(restTemplate, port);
+    }
+
+    @AfterEach
+    void clearAuthentication() {
+        TestAuthSupport.uninstall(restTemplate, authInterceptor);
+    }
 
     private String url(String path) {
         return "http://localhost:" + port + path;

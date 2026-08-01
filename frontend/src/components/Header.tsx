@@ -5,11 +5,19 @@ import IconButton from '@mui/material/IconButton';
 import Button from '@mui/material/Button';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { useColorMode } from '../hooks/useColorMode';
+import { useAuth } from '../hooks/useAuth';
 
 export function Header() {
   const { mode, toggleColorMode } = useColorMode();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  async function handleLogout() {
+    await logout();
+    navigate('/login');
+  }
 
   return (
     <AppBar position="static" component="header">
@@ -22,9 +30,22 @@ export function Header() {
         >
           StyleCast
         </Typography>
-        <Button component={RouterLink} to="/catalog" color="inherit" sx={{ mr: 1 }}>
-          Catalog
-        </Button>
+        {user && (
+          <>
+            <Button component={RouterLink} to="/history" color="inherit" sx={{ mr: 1 }}>
+              History
+            </Button>
+            <Button component={RouterLink} to="/catalog" color="inherit" sx={{ mr: 1 }}>
+              Catalog
+            </Button>
+            <Typography variant="body2" sx={{ mr: 1, display: { xs: 'none', sm: 'block' } }}>
+              {user.email}
+            </Typography>
+            <Button color="inherit" onClick={handleLogout} sx={{ mr: 1 }}>
+              Log out
+            </Button>
+          </>
+        )}
         <IconButton
           onClick={toggleColorMode}
           color="inherit"

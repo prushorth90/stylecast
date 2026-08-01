@@ -1,5 +1,6 @@
 package com.stylecast.event.styling;
 
+import com.stylecast.auth.CurrentUserProvider;
 import com.stylecast.event.EventNotFoundException;
 import com.stylecast.event.EventRepository;
 import com.stylecast.event.styling.dto.EventStylePreferencesResponse;
@@ -22,11 +23,15 @@ public class EventStylePreferencesService {
 
     private final EventStylePreferencesRepository preferencesRepository;
     private final EventRepository eventRepository;
+    private final CurrentUserProvider currentUserProvider;
 
     public EventStylePreferencesService(
-            EventStylePreferencesRepository preferencesRepository, EventRepository eventRepository) {
+            EventStylePreferencesRepository preferencesRepository,
+            EventRepository eventRepository,
+            CurrentUserProvider currentUserProvider) {
         this.preferencesRepository = preferencesRepository;
         this.eventRepository = eventRepository;
+        this.currentUserProvider = currentUserProvider;
     }
 
     public EventStylePreferencesResponse getPreferences(UUID eventId) {
@@ -91,7 +96,7 @@ public class EventStylePreferencesService {
     }
 
     private void requireEventExists(UUID eventId) {
-        if (!eventRepository.existsById(eventId)) {
+        if (eventRepository.findByIdAndUserId(eventId, currentUserProvider.requireCurrentUserId()).isEmpty()) {
             throw new EventNotFoundException(eventId);
         }
     }

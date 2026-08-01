@@ -17,6 +17,7 @@ import com.stylecast.recommendation.dto.OutfitItemResponse;
 import com.stylecast.recommendation.dto.OutfitRecommendationResponse;
 import com.stylecast.recommendation.dto.RecommendationsResponse;
 import com.stylecast.weather.EventWeatherSnapshotRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +29,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import com.stylecast.testsupport.NoExternalNetworkGuardConfig;
+import com.stylecast.testsupport.TestAuthSupport;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -93,6 +95,8 @@ class RecommendationControllerTest {
     @Autowired
     private ProductRepository productRepository;
 
+    private TestAuthSupport.InstalledAuth auth;
+
     @BeforeEach
     void cleanDatabase() {
         recommendationRepository.deleteAll();
@@ -100,6 +104,12 @@ class RecommendationControllerTest {
         interpretationRepository.deleteAll();
         preferencesRepository.deleteAll();
         eventRepository.deleteAll();
+        auth = TestAuthSupport.installAuthenticatedUser(restTemplate, port);
+    }
+
+    @AfterEach
+    void clearAuthentication() {
+        TestAuthSupport.uninstall(restTemplate, auth);
     }
 
     private String url(String path) {
@@ -108,7 +118,7 @@ class RecommendationControllerTest {
 
     private UUID createEvent(String title) {
         Event event = eventRepository.save(new Event(
-                UUID.randomUUID(), title, "description", "123 Main St, Springfield",
+                UUID.randomUUID(), auth.userId(), title, "description", "123 Main St, Springfield",
                 OffsetDateTime.now().plusDays(20), OffsetDateTime.now().plusDays(20).plusHours(4),
                 EventSetting.INDOOR, null, Instant.now()));
         return event.getId();
@@ -168,6 +178,20 @@ class RecommendationControllerTest {
     void getRecommendations_withUnknownEventId_returns404() {
         ResponseEntity<ApiError> response =
                 restTemplate.getForEntity(url("/api/events/" + UUID.randomUUID() + "/recommendations"), ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void generate_forAnotherUsersEvent_returns404() {
+        TestAuthSupport.AuthenticatedTestUser otherUser = TestAuthSupport.registerAndLogin(restTemplate, port);
+        Event othersEvent = eventRepository.save(new Event(
+                UUID.randomUUID(), otherUser.userId(), "Someone else's event", "description",
+                "123 Main St, Springfield", OffsetDateTime.now().plusDays(20), OffsetDateTime.now().plusDays(20).plusHours(4),
+                EventSetting.INDOOR, null, Instant.now()));
+
+        ResponseEntity<ApiError> response = restTemplate.postForEntity(
+                url("/api/events/" + othersEvent.getId() + "/recommendations/generate"), null, ApiError.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
