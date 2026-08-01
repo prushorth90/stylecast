@@ -32,11 +32,14 @@ export function Header() {
         </Typography>
         {user && (
           <>
+            <Button component={RouterLink} to="/events" color="inherit" sx={{ mr: 1 }}>
+              Events
+            </Button>
+            <Button component={RouterLink} to="/calendar" color="inherit" sx={{ mr: 1 }}>
+              Calendar
+            </Button>
             <Button component={RouterLink} to="/history" color="inherit" sx={{ mr: 1 }}>
               History
-            </Button>
-            <Button component={RouterLink} to="/catalog" color="inherit" sx={{ mr: 1 }}>
-              Catalog
             </Button>
             <Typography variant="body2" sx={{ mr: 1, display: { xs: 'none', sm: 'block' } }}>
               {user.email}

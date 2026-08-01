@@ -2,6 +2,7 @@ package com.stylecast.common.error;
 
 import com.stylecast.auth.EmailAlreadyRegisteredException;
 import com.stylecast.auth.InvalidCredentialsException;
+import com.stylecast.calendar.InvalidCalendarRangeException;
 import com.stylecast.catalog.InvalidProductFilterException;
 import com.stylecast.catalog.ProductNotFoundException;
 import com.stylecast.event.EventNotFoundException;
@@ -105,6 +106,19 @@ public class GlobalExceptionHandler {
                 null);
 
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
+    @ExceptionHandler(InvalidCalendarRangeException.class)
+    public ResponseEntity<ApiError> handleInvalidCalendarRange(InvalidCalendarRangeException ex, HttpServletRequest request) {
+        ApiError body = new ApiError(
+                Instant.now(),
+                HttpStatus.BAD_REQUEST.value(),
+                HttpStatus.BAD_REQUEST.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI(),
+                null);
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }
 
     @ExceptionHandler(EmailAlreadyRegisteredException.class)

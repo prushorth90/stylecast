@@ -46,13 +46,12 @@ Implemented so far:
   code, and saved preferences - never from live weather or invented
   products. See "Occasion interpretation" below.
 - A deterministic, locally seeded product catalog (products, size/color
-  variants, and per-variant inventory), with a temporary development
-  catalog browser at `/catalog` for listing, filtering, and inspecting
-  products. **The catalog is demo data: all brands and products are
-  fictional, seeded directly into PostgreSQL via Flyway, and are not
-  real Nordstrom (or any other retailer's) inventory.** `/catalog` is not
-  part of the outfit-recommendation flow; it exists to exercise and
-  showcase the catalog API during development.
+  variants, and per-variant inventory) backing the local outfit-
+  recommendation engine below. **The catalog is demo data: all brands and
+  products are fictional, seeded directly into PostgreSQL via Flyway, and
+  are not real Nordstrom (or any other retailer's) inventory.** There is no
+  frontend catalog-browsing page; the catalog is only ever consumed
+  through the recommendation engine.
 - A live retail product-search provider (`com.stylecast.retail`) that finds
   real, currently live `nordstrom.com` product pages using the OpenAI
   Responses API's `web_search` tool, restricted to the `nordstrom.com`
@@ -98,6 +97,10 @@ Implemented so far:
   endpoint (preferences, weather, interpretation, recommendations,
   generation jobs) is only reachable through the owning event. See
   "Authentication" below.
+- A custom StyleCast calendar (Task 18) at `/calendar`: month, week, and
+  upcoming/list views over the current user's own events, built entirely
+  from data already stored in StyleCast - no Google, Microsoft, or CalDAV
+  integration. See "Custom calendar" below.
 
 ### Authentication
 
@@ -188,6 +191,59 @@ environment variable for token signing.
   single-instance deployment; a real production deployment with multiple
   backend instances would need a shared session store (e.g. Spring
   Session backed by Postgres or Redis).
+
+### Custom calendar
+
+`/calendar` shows only the current user's own events (never another
+user's, and never events from an external calendar) in three views:
+
+- **Month** - a standard 6x7 grid; each day shows up to three events plus a
+  "+N more" action, and multi-day events get a distinct left accent bar.
+- **Week** - seven day columns with a pinned all-day row above an hourly,
+  time-labeled grid; timed events are positioned by their start/end time.
+- **Upcoming** - a day-grouped list of future events with title, time,
+  location, and styling status.
+
+All three views share one backend endpoint,
+`GET /api/events/calendar?start=&end=`, which returns only the
+authenticated user's events overlapping the requested (bounded) range,
+ordered by start time. Clicking an empty date (or, in week view, an empty
+time slot) opens the same event-creation modal used everywhere else in the
+app, prefilled with that date/time; clicking an event opens a details
+popup with **Edit**, **Delete**, and **Open styling workflow** actions -
+editing/deleting reuses the existing event modal/API, so an edit or delete
+made from the calendar is immediately reflected everywhere else (events
+list, history, event detail).
+
+**Styling status.** Each event shows a readable (never color-only) styling
+status label, derived from what's already persisted for that event (it
+never triggers a new occasion classification or live product search just
+by being shown on the calendar):
+
+| Label | Meaning |
+| --- | --- |
+| Styling not started | No styling preferences saved yet. |
+| Preferences saved | Preferences saved; no occasion interpretation yet. |
+| Interpretation ready | Interpretation exists; recommendations never generated. |
+| Recommendations pending | A generation ran but found nothing usable yet. |
+| Recommendations ready | The latest generation has usable results. |
+| Recommendations need updating | The latest generation is stale (preferences/interpretation changed since). |
+
+**Timezone/all-day handling.** Every date/time is rendered using the
+browser's local time zone, the same convention used everywhere else in the
+app (an event's stored instant is never manually re-offset). An event is
+treated as all-day when its start and end both fall on an exact midnight
+boundary and span at least one full day - a best-effort heuristic, since
+StyleCast's event model has no separate all-day flag.
+
+**Current limitations:**
+
+- No calendar synchronization, shared calendars, invitations, or attendees.
+- No drag-and-drop rescheduling.
+- No reminders or email notifications.
+- No external calendar export.
+- No recurring events (the event model doesn't support them).
+- No Google, Microsoft, or CalDAV integration of any kind.
 
 ### Live retail product search (development)
 
@@ -529,9 +585,7 @@ image-based mood boards. No authorized live Nordstrom product-image feed is
 available yet (see docs/ROADMAP.md), so **product images, current prices,
 sizes, colors, and availability are never shown for a live Nordstrom
 product - they are confirmed directly on nordstrom.com** via each "View on
-Nordstrom" link. **Demo catalog products may continue to use richer,
-locally-controlled, image-based cards** (see `frontend/src/components/catalog/ProductCard.tsx`) -
-this only applies to `LIVE_NORDSTROM` recommendations.
+Nordstrom" link. This only applies to `LIVE_NORDSTROM` recommendations.
 
 - **Complete product sets** show a green "Complete" badge and a "Live
   Nordstrom" source badge. **Partial product sets** show an amber

@@ -151,3 +151,14 @@ export async function updateEvent(eventId: string, input: CreateEventInput): Pro
   return (await response.json()) as Event;
 }
 
+/** Deletes an event the current user owns. Idempotent from the caller's perspective: an already-deleted event returns a 404, surfaced as an `EventApiError`. */
+export async function deleteEvent(eventId: string): Promise<void> {
+  const response = await apiFetch(`/api/events/${encodeURIComponent(eventId)}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    return parseErrorResponse(response);
+  }
+}
+

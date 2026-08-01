@@ -19,4 +19,15 @@ public interface EventRepository extends JpaRepository<Event, UUID> {
     List<Event> findByUserIdAndEndTimeAfterOrderByStartTimeAsc(UUID userId, OffsetDateTime now);
 
     List<Event> findByUserIdOrderByStartTimeDesc(UUID userId);
+
+    /**
+     * Every one of the user's events that overlaps the half-open interval
+     * {@code [rangeStart, rangeEnd)} - backs the calendar endpoint. Standard
+     * interval-overlap condition ({@code startTime < rangeEnd AND endTime >
+     * rangeStart}), so this correctly includes events that start before the
+     * range but end inside it, and events that span multiple days entirely
+     * covering the range.
+     */
+    List<Event> findByUserIdAndStartTimeLessThanAndEndTimeGreaterThanOrderByStartTimeAsc(
+            UUID userId, OffsetDateTime rangeEnd, OffsetDateTime rangeStart);
 }

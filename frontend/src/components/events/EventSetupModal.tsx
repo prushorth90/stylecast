@@ -107,6 +107,14 @@ interface EventSetupModalProps {
   initialEvent?: Event;
   /** Prefills Step 2; `null`/`undefined` means no saved preferences yet. */
   initialPreferences?: EventStylePreferences | null;
+  /**
+   * ISO-8601 start/end time to prefill Step 1's date/time fields when
+   * creating a brand-new event (no `eventId`/`initialEvent`) - used by the
+   * calendar's "click an empty date/time to create an event" interaction.
+   * Ignored when `initialEvent` is provided.
+   */
+  initialStartTime?: string;
+  initialEndTime?: string;
   /** Called after "Save and view recommendations" succeeds, with the saved event's id. */
   onCompleted: (eventId: string) => void;
 }
@@ -177,6 +185,8 @@ export function EventSetupModal({
   eventId,
   initialEvent,
   initialPreferences,
+  initialStartTime,
+  initialEndTime,
   onCompleted,
 }: EventSetupModalProps) {
   const [step, setStep] = useState<1 | 2>(eventId ? 2 : 1);
@@ -199,7 +209,15 @@ export function EventSetupModal({
       setStep(eventId ? 2 : 1);
       setSavedEventId(eventId ?? null);
       setPhase('idle');
-      setEventForm(toEventDetailsForm(initialEvent));
+      setEventForm(
+        initialEvent
+          ? toEventDetailsForm(initialEvent)
+          : {
+              ...toEventDetailsForm(initialEvent),
+              ...(initialStartTime ? { startTime: toDatetimeLocalValue(initialStartTime) } : {}),
+              ...(initialEndTime ? { endTime: toDatetimeLocalValue(initialEndTime) } : {}),
+            },
+      );
       setEventFieldErrors({});
       setEventSubmitError(null);
       setPreferencesForm(toPreferencesForm(initialPreferences));

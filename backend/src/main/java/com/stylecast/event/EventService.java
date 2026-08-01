@@ -106,5 +106,18 @@ public class EventService {
                 .orElseThrow(() -> new EventNotFoundException(eventId));
         return EventResponse.fromEntity(event);
     }
+
+    /**
+     * Deletes an event the caller owns. Cascades to every per-event child
+     * table (preferences, weather snapshot, occasion interpretation, local
+     * and live recommendations) via each table's existing {@code ON DELETE
+     * CASCADE} foreign key to {@code events.id} - no explicit cleanup is
+     * needed here.
+     */
+    public void deleteEvent(UUID eventId) {
+        Event event = eventRepository.findByIdAndUserId(eventId, currentUserProvider.requireCurrentUserId())
+                .orElseThrow(() -> new EventNotFoundException(eventId));
+        eventRepository.delete(event);
+    }
 }
 
