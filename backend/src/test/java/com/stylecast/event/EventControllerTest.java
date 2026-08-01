@@ -392,6 +392,50 @@ class EventControllerTest {
         assertThat(ids).containsExactly(ownEvent.getId());
     }
 
+    @Test
+    void deleteEvent_forOwnEvent_removesItAndReturns204() {
+        Event event = eventRepository.save(sampleEvent(
+                "To be deleted", OffsetDateTime.now().plusDays(1), OffsetDateTime.now().plusDays(1).plusHours(1)));
+
+        ResponseEntity<Void> response = restTemplate.exchange(
+                url("/api/events/" + event.getId()), org.springframework.http.HttpMethod.DELETE, null, Void.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        assertThat(eventRepository.findById(event.getId())).isEmpty();
+    }
+
+    @Test
+    void deleteEvent_withUnknownId_returns404() {
+        UUID unknownId = UUID.randomUUID();
+
+        ResponseEntity<ApiError> response = restTemplate.exchange(
+                url("/api/events/" + unknownId), org.springframework.http.HttpMethod.DELETE, null, ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void deleteEvent_ownedByAnotherUser_returns404AndDoesNotDelete() {
+        TestAuthSupport.AuthenticatedTestUser otherUser = TestAuthSupport.registerAndLogin(restTemplate, port);
+        Event othersEvent = eventRepository.save(new Event(
+                UUID.randomUUID(),
+                otherUser.userId(),
+                "Someone else's event",
+                "Description",
+                "Some location",
+                OffsetDateTime.now().plusDays(1),
+                OffsetDateTime.now().plusDays(1).plusHours(1),
+                EventSetting.INDOOR,
+                "Casual",
+                Instant.now()));
+
+        ResponseEntity<ApiError> response = restTemplate.exchange(
+                url("/api/events/" + othersEvent.getId()), org.springframework.http.HttpMethod.DELETE, null, ApiError.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(eventRepository.findById(othersEvent.getId())).isPresent();
+    }
+
     private Event sampleEvent(String title, OffsetDateTime start, OffsetDateTime end) {
         return new Event(
                 UUID.randomUUID(),

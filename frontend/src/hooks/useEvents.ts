@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createEvent,
+  deleteEvent,
   fetchEventById,
   fetchEventHistory,
   fetchUpcomingEvents,
@@ -66,6 +67,24 @@ export function useUpdateEvent(eventId: string | undefined) {
       if (eventId) {
         queryClient.setQueryData(eventQueryKey(eventId), updated);
       }
+      queryClient.invalidateQueries({ queryKey: eventsQueryKey });
+    },
+  });
+}
+
+/**
+ * Deletes an event the current user owns. Invalidates every query keyed
+ * under `['events', ...]` (upcoming list, history, the single-event cache,
+ * and the calendar's range queries - see `useCalendarEvents`) so the
+ * deleted event disappears from every view immediately, not just the one
+ * that triggered the deletion.
+ */
+export function useDeleteEvent() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (eventId: string) => deleteEvent(eventId),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: eventsQueryKey });
     },
   });
